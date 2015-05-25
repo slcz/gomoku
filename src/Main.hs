@@ -28,12 +28,16 @@ data Opponent = Opponent
 data Board = Board
     {
         opponent     :: (Opponent, Opponent)
-    ,   range        :: Range
     ,   win          :: Set Pos
-    ,   drawScale    :: Int
+    }
+
+data Config = Config
+    {
+        gridSize     :: Int
+    ,   range        :: Range
     ,   background   :: Color
-    ,   stoneSize    :: Rational
-    ,   markSize     :: Rational
+    ,   stoneSize    :: Float
+    ,   markSize     :: Float
     ,   pollInterval :: Int
     }
 
@@ -70,58 +74,54 @@ instance Semigroup Picture
 
 -- convinent function to applies offset and locate the board to the
 -- center of screen
-applyOffset board = mapTuple trans $ range board where
-    trans = negate . fromIntegral . (* (drawScale board `div` 2))
+(shiftx, shifty) = mapTuple shiftFun $ range gameConfig where
+    shiftFun = negate . fromIntegral . (* (gridSize gameConfig `div` 2))
 
 -- Draw board and stones. First draws grid, then stones of white and black,
 -- finally a small square for the group stones that are connected (winner
 -- side).
 draw :: Board -> Picture
-draw board = translate sx sy pic where
+draw board = translate shiftx shifty pic where
+    Config gs (boundaryX, boundaryY) _ ss mark _ = gameConfig
     pic = grid <> plays <> wins
-    (x, y) = range board
-    sc = drawScale board
-    (sx, sy) = applyOffset board
-    conv = map $ map $ mapTuple $ fromIntegral . (* sc)
-    gx = conv [[(x', 0), (x', y )] | x' <- [0 .. x]]
-    gy = conv [[(0, y'), (x,  y')] | y' <- [0 .. y]]
+    conv = map $ map $ mapTuple $ fromIntegral . (* gs)
+    gx = conv [[(x, 0), (x, boundaryY)] | x <- [0 .. boundaryX]]
+    gy = conv [[(0, y), (boundaryX, y)] | y <- [0 .. boundaryY]]
     gridfunc = mconcat . map (color black . line)
     grid = gridfunc gx <> gridfunc gy
-    trans = fromIntegral . (+ (sc `div` 2)) . (* sc)
+    center = fromIntegral . (+ (gs `div` 2)) . (* gs)
     playsfunc location = mconcat
-        [   translate (trans mx) (trans my) $ 
+        [   translate (center mx) (center my) $
             color (stoneColor party)
-            (thickCircle 1 ((fromIntegral sc) *
-             (fromRational $ stoneSize board)))
+            (thickCircle 1 ((fromIntegral gs) * ss))
         |   (mx, my) <- toList $ stoneSet party] where
         party = location $ opponent board
     plays = playsfunc fst <> playsfunc snd
-    mark  = fromRational $ markSize board
-    wins  = mconcat [   translate (trans mx) (trans my) $
+    wins  = mconcat [   translate (center mx) (center my) $
                         color red
-                        (rectangleSolid ((fromIntegral sc) * mark)
-                                        ((fromIntegral sc) * mark))
+                        (rectangleSolid ((fromIntegral gs) * mark)
+                                        ((fromIntegral gs) * mark))
                     |   (mx, my) <- toList $ win board]
 
 -- Capture left mouse button release event.
 input :: Event -> Board -> Board
 input _ board | not . null . win $ board = board
-input (EventKey (MouseButton LeftButton) Up _ (x', y')) board =
-    let sc = fromIntegral $ drawScale board
-        (sx, sy) = applyOffset board
+input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board =
+    let Config gs' rangeBoard _ ss mark _ = gameConfig
+        sc = fromIntegral gs'
         stones   = stoneSet $ fst $ opponent board
         allstones = uncurry union $ mapTuple stoneSet $ opponent board
         snap     = floor . (/ sc)
         -- pos@(x, y) is normalized position of the move.
-        pos@(x, y) = (snap (x' - sx), snap (y' - sy))
-        upd = pos `Data.Set.insert` stones
+        pos@(x, y) = (snap (mousex - shiftx), snap (mousey - shifty))
+        update = pos `Data.Set.insert` stones
     in
-        if withinBoard (range board) pos &&
+        if withinBoard rangeBoard pos &&
            pos `Data.Set.notMember` allstones
             then board {
-                opponent = swap ((fst $ opponent board) { stoneSet = upd },
+                opponent = swap ((fst $ opponent board) { stoneSet = update },
                                  (snd $ opponent board)),
-                win  = checkWinCondition upd (range board) pos }
+                win  = checkWinCondition update rangeBoard pos }
             else board
 input _ board = board
 
@@ -130,18 +130,22 @@ step _ = id
 initialBoard = Board
     {
         opponent  = (Opponent mempty black, Opponent mempty white)
-    ,   range     = (13, 13)
     ,   win       = mempty
-    ,   drawScale = 50
+    }
+
+gameConfig = Config
+    {
+        range     = (13, 13)
+    ,   gridSize  = 50
     ,   background= makeColor 0.86 0.71 0.52 0.50
-    ,   stoneSize = 4 % 5
-    ,   markSize  = 1 % 6
+    ,   stoneSize = fromRational $ 4 % 5
+    ,   markSize  = fromRational $ 1 % 6
     ,   pollInterval = 200
     }
 
 main = do
-    let gridSize = range initialBoard
-        scaling = (* drawScale initialBoard)
-    play (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ range initialBoard)
-         (background initialBoard) (pollInterval initialBoard)
+    let scaling = (* gridSize gameConfig)
+    play (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ range gameConfig)
+         (background gameConfig)
+         (pollInterval gameConfig)
          initialBoard draw input step
