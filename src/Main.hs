@@ -132,11 +132,11 @@ input _ world = world
 step _ = id
 
 main = do
-    let initialBoard = Board (mempty, mempty) (11, 11)
+    let initialBoard = Board (mempty, mempty) (19, 19)
         world = World initialBoard (black, white) mempty 50
         gridSize = range $ board world
         scaling = (* drawScale world)
-    play (InWindow "Tic-tac-toe" (1, 1) $
+    play (InWindow "GOMOKU" (1, 1) $
           mapTuple scaling $ range $ board world)
          (makeColor 0.86 0.71 0.52 0.50)
-         10 world draw input step
+         200 world draw input step
