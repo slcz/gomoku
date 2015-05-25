@@ -99,9 +99,9 @@ draw world = translate sx sy pic where
         |   (mx, my) <- toList . fst . (getSet opponent) . stones . board $ world ]
     plays = playsfunc black <> playsfunc white
     wins  = mconcat [   translate (trans mx) (trans my) $
-                        color green 
-                        (rectangleSolid ((fromIntegral sc) / 3)
-                                        ((fromIntegral sc) / 3))
+                        color red
+                        (rectangleSolid ((fromIntegral sc) / 6)
+                                        ((fromIntegral sc) / 6))
                     |   (mx, my) <- toList $ win world ]
 
 -- Capture left mouse button release event.
