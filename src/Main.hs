@@ -11,7 +11,7 @@
 import Prelude()
 import ClassyPrelude
 import Graphics.Gloss hiding (Vector)
-import Graphics.Gloss.Interface.Pure.Game hiding (Vector)
+import Graphics.Gloss.Interface.IO.Game hiding (Vector)
 import qualified Data.Set
 import Data.Tuple
 import Data.Ratio
@@ -80,8 +80,8 @@ instance Semigroup Picture
 -- Draw board and stones. First draws grid, then stones of white and black,
 -- finally a small square for the group stones that are connected (winner
 -- side).
-draw :: Board -> Picture
-draw board = translate shiftx shifty pic where
+draw :: Board -> IO Picture
+draw board = return $ translate shiftx shifty pic where
     Config gs (boundaryX, boundaryY) _ ss mark _ = gameConfig
     pic = grid <> plays <> wins
     conv = map $ map $ mapTuple $ fromIntegral . (* gs)
@@ -104,9 +104,9 @@ draw board = translate shiftx shifty pic where
                     |   (mx, my) <- toList $ win board]
 
 -- Capture left mouse button release event.
-input :: Event -> Board -> Board
-input _ board | not . null . win $ board = board
-input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board =
+input :: Event -> Board -> IO Board
+input _ board | not . null . win $ board = return board
+input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = return $ do
     let Config gs' rangeBoard _ ss mark _ = gameConfig
         sc = fromIntegral gs'
         stones   = stoneSet $ fst $ opponent board
@@ -115,17 +115,16 @@ input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board =
         -- pos@(x, y) is normalized position of the move.
         pos@(x, y) = (snap (mousex - shiftx), snap (mousey - shifty))
         update = pos `Data.Set.insert` stones
-    in
-        if withinBoard rangeBoard pos &&
-           pos `Data.Set.notMember` allstones
-            then board {
-                opponent = swap ((fst $ opponent board) { stoneSet = update },
-                                 (snd $ opponent board)),
-                win  = checkWinCondition update rangeBoard pos }
-            else board
-input _ board = board
+    if withinBoard rangeBoard pos &&
+       pos `Data.Set.notMember` allstones
+        then board {
+            opponent = swap ((fst $ opponent board) { stoneSet = update },
+                             (snd $ opponent board)),
+            win  = checkWinCondition update rangeBoard pos }
+        else board
+input _ board = return board
 
-step _ = id
+step _ = return
 
 initialBoard = Board
     {
@@ -145,7 +144,7 @@ gameConfig = Config
 
 main = do
     let scaling = (* gridSize gameConfig)
-    play (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ range gameConfig)
-         (background gameConfig)
-         (pollInterval gameConfig)
-         initialBoard draw input step
+    playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ range gameConfig)
+           (background gameConfig)
+           (pollInterval gameConfig)
+           initialBoard draw input step
