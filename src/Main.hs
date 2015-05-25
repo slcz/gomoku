@@ -14,14 +14,27 @@ import Graphics.Gloss hiding (Vector)
 import Graphics.Gloss.Interface.Pure.Game hiding (Vector)
 import qualified Data.Set
 import Data.Tuple
+import Data.Ratio
 
 type Range = (Int, Int)
 type Pos   = (Int, Int)
 
+data Opponent = Opponent
+    {
+        stoneSet   :: Set Pos
+    ,   stoneColor :: Color
+    } deriving (Show)
+
 data Board = Board
     {
-        stones :: (Set Pos, Set Pos)
-    ,   range  :: Range
+        opponent     :: (Opponent, Opponent)
+    ,   range        :: Range
+    ,   win          :: Set Pos
+    ,   drawScale    :: Int
+    ,   background   :: Color
+    ,   stoneSize    :: Rational
+    ,   markSize     :: Rational
+    ,   pollInterval :: Int
     }
 
 -- check x, y is within the board boundary.
@@ -34,8 +47,7 @@ walkDirection :: Set Pos -> Range -> Pos -> Pos -> Set Pos
 walkDirection set rng position@(x, y) (deltax, deltay) =
     let oneDirection position'@(x', y') inc =
          if withinBoard rng position'
-           &&
-           position' `member` set
+           && position' `member` set
             then position' `Data.Set.insert` oneDirection
                     (x' + inc * deltax, y' + inc * deltay) inc
             else mempty
@@ -56,87 +68,80 @@ checkWinCondition set rng position =
 -- Declare picture as semigroup in order to use <>
 instance Semigroup Picture
 
---
--- [@World@] Global states. Turn is a tuple, the first member is the
--- one that moves first. Win is a set of stones that are connected.
--- drawScale is the scaling factor of the grid.
---
-data World = World
-    {   board :: Board
-    ,   turn  :: (Color, Color)
-    ,   win   :: Set Pos
-    ,   drawScale :: Int
-    }
-
--- Select the set of stones belonging to a player. Black is the first set.
-getSet o = if o == black then id else swap
-
 -- convinent function to applies offset and locate the board to the
 -- center of screen
-applyOffset world = mapTuple trans (range $ board world) where
-    trans = negate . fromIntegral . (* (sc `div` 2))
-    sc = drawScale world
+applyOffset board = mapTuple trans $ range board where
+    trans = negate . fromIntegral . (* (drawScale board `div` 2))
 
 -- Draw board and stones. First draws grid, then stones of white and black,
 -- finally a small square for the group stones that are connected (winner
 -- side).
-draw :: World -> Picture
-draw world = translate sx sy pic where
+draw :: Board -> Picture
+draw board = translate sx sy pic where
     pic = grid <> plays <> wins
-    (x, y) = range $ board world
-    (sx, sy) = applyOffset world
-    sc = drawScale world
+    (x, y) = range board
+    sc = drawScale board
+    (sx, sy) = applyOffset board
     conv = map $ map $ mapTuple $ fromIntegral . (* sc)
     gx = conv [[(x', 0), (x', y )] | x' <- [0 .. x]]
     gy = conv [[(0, y'), (x,  y')] | y' <- [0 .. y]]
     gridfunc = mconcat . map (color black . line)
     grid = gridfunc gx <> gridfunc gy
     trans = fromIntegral . (+ (sc `div` 2)) . (* sc)
-    playsfunc opponent = mconcat
+    playsfunc location = mconcat
         [   translate (trans mx) (trans my) $ 
-            color opponent
-            (thickCircle 1 ((fromIntegral sc) / 5 * 4))
-        |   (mx, my) <- toList . fst . (getSet opponent) . stones . board $ world ]
-    plays = playsfunc black <> playsfunc white
+            color (stoneColor party)
+            (thickCircle 1 ((fromIntegral sc) *
+             (fromRational $ stoneSize board)))
+        |   (mx, my) <- toList $ stoneSet party] where
+        party = location $ opponent board
+    plays = playsfunc fst <> playsfunc snd
+    mark  = fromRational $ markSize board
     wins  = mconcat [   translate (trans mx) (trans my) $
                         color red
-                        (rectangleSolid ((fromIntegral sc) / 6)
-                                        ((fromIntegral sc) / 6))
-                    |   (mx, my) <- toList $ win world ]
+                        (rectangleSolid ((fromIntegral sc) * mark)
+                                        ((fromIntegral sc) * mark))
+                    |   (mx, my) <- toList $ win board]
 
 -- Capture left mouse button release event.
-input :: Event -> World -> World
-input _ world | not . null . win $ world = world
-input (EventKey (MouseButton LeftButton) Up _ (x', y')) world =
-    let sc = fromIntegral $ drawScale world
-        (sx, sy) = applyOffset world
-        brd = board world
-        stn = stones brd
-        trn = getSet . fst $ turn world
-        snap = floor . (/ sc)
+input :: Event -> Board -> Board
+input _ board | not . null . win $ board = board
+input (EventKey (MouseButton LeftButton) Up _ (x', y')) board =
+    let sc = fromIntegral $ drawScale board
+        (sx, sy) = applyOffset board
+        stones   = stoneSet $ fst $ opponent board
+        allstones = uncurry union $ mapTuple stoneSet $ opponent board
+        snap     = floor . (/ sc)
         -- pos@(x, y) is normalized position of the move.
         pos@(x, y) = (snap (x' - sx), snap (y' - sy))
-        upd' = first (pos `Data.Set.insert`) $ trn stn
-        -- update stones on board.
-        upd = trn upd'
+        upd = pos `Data.Set.insert` stones
     in
-        if withinBoard (range brd) pos &&
-           pos `Data.Set.notMember` (fst stn `union` snd stn)
-            then world {
-                board = brd { stones = upd },
-                turn = swap $ turn world,
-                win  = checkWinCondition (fst upd') (range brd) pos }
-            else world
-input _ world = world
+        if withinBoard (range board) pos &&
+           pos `Data.Set.notMember` allstones
+            then board {
+                opponent = swap ((fst $ opponent board) { stoneSet = upd },
+                                 (snd $ opponent board)),
+                win  = checkWinCondition upd (range board) pos }
+            else board
+input _ board = board
 
 step _ = id
 
+initialBoard = Board
+    {
+        opponent  = (Opponent mempty black, Opponent mempty white)
+    ,   range     = (13, 13)
+    ,   win       = mempty
+    ,   drawScale = 50
+    ,   background= makeColor 0.86 0.71 0.52 0.50
+    ,   stoneSize = 4 % 5
+    ,   markSize  = 1 % 6
+    ,   pollInterval = 200
+    }
+
 main = do
-    let initialBoard = Board (mempty, mempty) (19, 19)
-        world = World initialBoard (black, white) mempty 50
-        gridSize = range $ board world
-        scaling = (* drawScale world)
-    play (InWindow "GOMOKU" (1, 1) $
-          mapTuple scaling $ range $ board world)
-         (makeColor 0.86 0.71 0.52 0.50)
-         200 world draw input step
+    let gridSize = range initialBoard
+        scaling = (* drawScale initialBoard)
+    play (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ range initialBoard)
+         (background initialBoard) (pollInterval initialBoard)
+         initialBoard draw input step
