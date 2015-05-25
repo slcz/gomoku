@@ -19,10 +19,13 @@ import Data.Ratio
 type Range = (Int, Int)
 type Pos   = (Int, Int)
 
+data Player = HUMAN | MACHINE deriving (Eq, Show)
+
 data Opponent = Opponent
     {
         stoneSet   :: Set Pos
     ,   stoneColor :: Color
+    ,   player     :: Player
     } deriving (Show)
 
 data Board = Board
@@ -39,6 +42,7 @@ data Config = Config
     ,   stoneSize    :: Float
     ,   markSize     :: Float
     ,   pollInterval :: Int
+    ,   winCondition :: Int
     }
 
 -- check x, y is within the board boundary.
@@ -67,7 +71,7 @@ checkWinCondition set rng position =
     let dir :: [Pos]
         dir = [(1, 0), (0, 1), (1, 1), ((-1), 1)]
         walk = walkDirection set rng position
-    in  unions . filter ((== 5) . length) . map walk $ dir
+    in  unions . filter ((==winCondition gameConfig) . length) . map walk $ dir
 
 -- Declare picture as semigroup in order to use <>
 instance Semigroup Picture
@@ -82,7 +86,7 @@ instance Semigroup Picture
 -- side).
 draw :: Board -> IO Picture
 draw board = return $ translate shiftx shifty pic where
-    Config gs (boundaryX, boundaryY) _ ss mark _ = gameConfig
+    Config gs (boundaryX, boundaryY) _ ss mark _ _ = gameConfig
     pic = grid <> plays <> wins
     conv = map $ map $ mapTuple $ fromIntegral . (* gs)
     gx = conv [[(x, 0), (x, boundaryY)] | x <- [0 .. boundaryX]]
@@ -106,8 +110,9 @@ draw board = return $ translate shiftx shifty pic where
 -- Capture left mouse button release event.
 input :: Event -> Board -> IO Board
 input _ board | not . null . win $ board = return board
-input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = return $ do
-    let Config gs' rangeBoard _ ss mark _ = gameConfig
+input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey))
+    board = return $ do
+    let Config gs' rangeBoard _ ss mark _ _ = gameConfig
         sc = fromIntegral gs'
         stones   = stoneSet $ fst $ opponent board
         allstones = uncurry union $ mapTuple stoneSet $ opponent board
@@ -128,7 +133,7 @@ step _ = return
 
 initialBoard = Board
     {
-        opponent  = (Opponent mempty black, Opponent mempty white)
+        opponent  = (Opponent mempty black HUMAN, Opponent mempty white HUMAN)
     ,   win       = mempty
     }
 
@@ -140,6 +145,7 @@ gameConfig = Config
     ,   stoneSize = fromRational $ 4 % 5
     ,   markSize  = fromRational $ 1 % 6
     ,   pollInterval = 200
+    ,   winCondition = 5 -- Win condition: 5 stones connected
     }
 
 main = do
