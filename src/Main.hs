@@ -89,7 +89,7 @@ draw world = translate sx sy pic where
     conv = map $ map $ mapTuple $ fromIntegral . (* sc)
     gx = conv [[(x', 0), (x', y )] | x' <- [0 .. x]]
     gy = conv [[(0, y'), (x,  y')] | y' <- [0 .. y]]
-    gridfunc = mconcat . (map (color black . line))
+    gridfunc = mconcat . map (color black . line)
     grid = gridfunc gx <> gridfunc gy
     trans = fromIntegral . (+ (sc `div` 2)) . (* sc)
     playsfunc opponent = mconcat
@@ -137,5 +137,6 @@ main = do
         gridSize = range $ board world
         scaling = (* drawScale world)
     play (InWindow "Tic-tac-toe" (1, 1) $
-          mapTuple scaling $ range $ board world) azure 10
-         world draw input step
+          mapTuple scaling $ range $ board world)
+         (makeColor 0.86 0.71 0.52 0.50)
+         10 world draw input step
