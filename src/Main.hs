@@ -1,3 +1,10 @@
+--
+-- | Gomoku is a simple board game using haskell gloss library.
+-- @
+-- Release Notes:
+-- For 0.1.0.0
+-- Initial checkin, human to human.
+--
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -17,8 +24,10 @@ data Board = Board
     ,   range  :: Range
     }
 
+-- check x, y is within the board boundary.
 withinBoard (dx, dy) (x, y) = x >= 0 && y >= 0 && x < dx && y < dy
 
+-- maps f to a tuple.
 mapTuple f = f *** f
 
 walkDirection :: Set Pos -> Range -> Pos -> Pos -> Set Pos
@@ -32,6 +41,11 @@ walkDirection set rng position@(x, y) (deltax, deltay) =
             else mempty
     in (oneDirection position 1) <> (oneDirection position (-1))
 
+--
+-- checkWinCondition locations range new-stone set-connected-to-the-new-stone.
+-- A stone is connected to another if it's adjacent
+-- either horizontally, vertially or diagnoally.
+--
 checkWinCondition :: Set Pos -> Range -> Pos -> Set Pos
 checkWinCondition set rng position =
     let dir :: [Pos]
@@ -39,8 +53,14 @@ checkWinCondition set rng position =
         walk = walkDirection set rng position
     in  unions . filter ((== 5) . length) . map walk $ dir
 
+-- Declare picture as semigroup in order to use <>
 instance Semigroup Picture
 
+--
+-- [@World@] Global states. Turn is a tuple, the first member is the
+-- one that moves first. Win is a set of stones that are connected.
+-- drawScale is the scaling factor of the grid.
+--
 data World = World
     {   board :: Board
     ,   turn  :: (Color, Color)
@@ -48,12 +68,18 @@ data World = World
     ,   drawScale :: Int
     }
 
+-- Select the set of stones belonging to a player. Black is the first set.
 getSet o = if o == black then id else swap
 
+-- convinent function to applies offset and locate the board to the
+-- center of screen
 applyOffset world = mapTuple trans (range $ board world) where
     trans = negate . fromIntegral . (* (sc `div` 2))
     sc = drawScale world
 
+-- Draw board and stones. First draws grid, then stones of white and black,
+-- finally a small square for the group stones that are connected (winner
+-- side).
 draw :: World -> Picture
 draw world = translate sx sy pic where
     pic = grid <> plays <> wins
@@ -78,6 +104,7 @@ draw world = translate sx sy pic where
                                         ((fromIntegral sc) / 3))
                     |   (mx, my) <- toList $ win world ]
 
+-- Capture left mouse button release event.
 input :: Event -> World -> World
 input _ world | not . null . win $ world = world
 input (EventKey (MouseButton LeftButton) Up _ (x', y')) world =
@@ -87,8 +114,10 @@ input (EventKey (MouseButton LeftButton) Up _ (x', y')) world =
         stn = stones brd
         trn = getSet . fst $ turn world
         snap = floor . (/ sc)
+        -- pos@(x, y) is normalized position of the move.
         pos@(x, y) = (snap (x' - sx), snap (y' - sy))
         upd' = first (pos `Data.Set.insert`) $ trn stn
+        -- update stones on board.
         upd = trn upd'
     in
         if withinBoard (range brd) pos &&
