@@ -16,26 +16,32 @@ import qualified Data.Set
 import Data.Tuple
 import Data.Ratio
 import Data.Maybe
+import Data.List ((!!))
+import Data.Set (fromList, delete)
 import Control.Concurrent.STM.TChan
 import Control.Concurrent
+import Debug.Trace
+import System.Random
 
 type Dimension = (Int, Int)
 type Pos = (Int, Int)
 
-data Player = Human | AI deriving (Eq)
+data Player = Human | AI deriving (Eq, Show)
+
+data Message = Move Pos | Win | Lose | Tie | Start deriving (Eq, Show)
 
 data Opponent = Opponent
     {
         stoneSet   :: Set Pos
     ,   stoneColor :: Color
     ,   players    :: Player
-    }
+    } deriving (Show)
 
 data Board = Board
     {
         opponent    :: (Opponent, Opponent)
     ,   win         :: Set Pos
-    ,   ch          :: (Maybe (TChan (Pos)), Maybe (TChan (Pos)))
+    ,   ch          :: (Maybe ([TChan Message]), Maybe ([TChan Message]))
     }
 
 data Config = Config
@@ -111,30 +117,50 @@ draw board = return $ translate shiftx shifty pic where
                                         ((fromIntegral gs) * mark))
                     |   (mx, my) <- toList $ win board]
 
+nextStep :: Board -> Pos -> IO (Board, Bool)
+nextStep board pos = do
+    let Config gs' dimBoard _ ss mark _ _ = gameConfig
+        stones   = stoneSet $ fst $ opponent board
+        update = pos `Data.Set.insert` stones
+        allstones = uncurry union $ mapTuple stoneSet $ opponent board
+    if withinBoard dimBoard pos &&
+       pos `Data.Set.notMember` allstones
+        then return (board {
+                opponent = swap ((fst $ opponent board)
+                                    { stoneSet = update },
+                                 (snd $ opponent board)),
+                win  = checkWinCondition update dimBoard pos,
+                ch   = swap $ ch board }, True)
+        else return (board, False)
+
 -- Capture left mouse button release event.
 input :: Event -> Board -> IO Board
 input _ board | not . null . win $ board = return board
-input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey))
-    board = return $ do
-    let Config gs' dimBoard _ ss mark _ _ = gameConfig
-        sc = fromIntegral gs'
-        stones   = stoneSet $ fst $ opponent board
-        allstones = uncurry union $ mapTuple stoneSet $ opponent board
+input _ board | (players . fst . opponent $ board) == AI = return board
+input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
+    let sc = fromIntegral $ gridSize gameConfig
         snap     = floor . (/ sc)
         -- pos@(x, y) is normalized position of the move.
         pos@(x, y) = (snap (mousex - shiftx), snap (mousey - shifty))
-        update = pos `Data.Set.insert` stones
-    if withinBoard dimBoard pos &&
-       pos `Data.Set.notMember` allstones
-        then board {
-            opponent = swap ((fst $ opponent board) { stoneSet = update },
-                             (snd $ opponent board)),
-            win  = checkWinCondition update dimBoard pos,
-            ch   = swap $ ch board }
-        else board
+    (newBoard, legal) <- nextStep board pos
+    when legal $ do
+        let msgch = snd $ ch board
+        when (isJust msgch) $
+            atomically $ writeTChan (headEx $ fromJust msgch) $ Move pos
+    return newBoard
 input _ board = return board
 
-step _ = return
+nextAIMove (Move pos) board = fst <$> nextStep board pos
+nextAIMove _ board = return board
+
+step :: Float -> Board -> IO Board
+step _ board | (players . fst . opponent $ board) == Human = return board
+step _ board = do
+    let [chTx, chRx] = fromJust . fst . ch $ board
+    msg <- atomically $ readTChan chRx
+    if not . null . win $ board
+        then atomically $ writeTChan chTx Win >> return board
+        else nextAIMove msg board
 
 initialBoard = Board
     {
@@ -145,34 +171,69 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        dimension = (13, 13)
-    ,   gridSize  = 50
-    ,   background= makeColor 0.86 0.71 0.52 0.50
-    ,   stoneSize = fromRational $ 4 % 5
-    ,   markSize  = fromRational $ 1 % 6
+        dimension  = (13, 13)
+    ,   gridSize   = 50
+    ,   background = makeColor 0.86 0.71 0.52 0.50
+    ,   stoneSize  = fromRational $ 4 % 5
+    ,   markSize   = fromRational $ 1 % 6
     ,   pollInterval = 200
     ,   winCondition = 5 -- Win condition: 5 stones connected
     }
 
-makeChTbl :: [(Player, IO (Maybe (TChan a)))]
-makeChTbl = [(Human, return Nothing), (AI, Just <$> newTChanIO)]
+nextMove :: Set (Int, Int) -> IO (Int, Int)
+nextMove legalMoves = do
+    let l   = toList legalMoves
+        len = length legalMoves
+    idx <- randomRIO (0, len - 1) :: IO Int
+    e   <- return $ l !!idx
+    return e
+    -- choice
 
-runAI channel = return ()
+runAI :: [TChan Message] -> Set (Int, Int) -> IO ()
+runAI channels legalMoves = do
+    let [chRx, chTx] = channels
+    msg <- atomically $ readTChan chRx
+    case msg of
+        Win      -> putStrLn "Win"  >> return ()
+        Lose     -> putStrLn "Lose" >> return ()
+        Start    -> nextMove legalMoves >> runAI channels legalMoves
+        Move pos -> do
+            lm <- return $ delete pos legalMoves
+            p  <- nextMove lm
+            atomically $ writeTChan chTx $ Move p
+            runAI channels $ delete p legalMoves
+
+newTChanIOpair :: IO [TChan a]
+newTChanIOpair = newTChanIO >>= \a -> newTChanIO >>= \b -> return [a, b]
+
+makeChTbl :: [(Player, IO (Maybe [TChan a]))]
+makeChTbl = [(Human, return Nothing), (AI, Just <$> newTChanIOpair)]
 
 main :: IO ()
 main = do
     let playmode = mapTuple players . opponent $ initialBoard
         ch =  mapTuple (fromJust . flip lookup makeChTbl) playmode
+
+    -- create channels for AIs
     channels <- (uncurry $ liftM2 (,)) ch
-    let f c = case c of
-                Just ch'-> (forkIO $ runAI ch') >> return ()
-                Nothing -> return ()
-    k <- (uncurry $ liftM2 ((,) . f)) ch
+
+    -- fork tasks for AIs
+    let legalMoves = Data.Set.fromList [ (x, y) |
+                                x <- [0 .. fst (dimension gameConfig) - 1],
+                                y <- [0 .. snd (dimension gameConfig) - 1]]
+        startIO :: Maybe [TChan Message] -> IO ()
+        startIO maybech = case maybech of
+                            Nothing-> return ()
+                            Just c -> forkIO (runAI c legalMoves) >> return ()
+    startIO $ fst channels
+    startIO $ snd channels
     board <- return $ initialBoard {ch = channels }
+
+    -- Jump start the first AI
+    atomically $ mapM_ (\x -> writeTChan (headEx x) Start) $ fst channels
     
-    -- board <- return $ initialBoard { ch = channels }
     let scaling = (* gridSize gameConfig)
     playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ dimension gameConfig)
            (background gameConfig)
            (pollInterval gameConfig)
-           initialBoard draw input step
+           board draw input step
