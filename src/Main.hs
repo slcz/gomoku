@@ -34,6 +34,7 @@ data Board = Board
     {
         opponent    :: (Opponent, Opponent)
     ,   win         :: Set Pos
+    ,   ch          :: (Maybe (TChan (Pos)), Maybe (TChan (Pos)))
     }
 
 data Config = Config
@@ -137,6 +138,7 @@ initialBoard = Board
     {
         opponent  = (Opponent mempty black Human, Opponent mempty white AI)
     ,   win       = mempty
+    ,   ch        = (Nothing, Nothing)
     }
 
 gameConfig = Config
@@ -150,9 +152,6 @@ gameConfig = Config
     ,   winCondition = 5 -- Win condition: 5 stones connected
     }
 
-maybeNewChan mode | mode == Human = return Nothing
-maybeNewChan mode | mode == AI = Just <$> newTChanIO
-
 makeChCmd :: [(Player, IO (Maybe (TChan a)))]
 makeChCmd = [(Human, return Nothing), (AI, Just <$> newTChanIO)]
 
@@ -160,10 +159,8 @@ main :: IO ()
 main = do
     let playmode = mapTuple players . opponent $ initialBoard
     let channels = sequence $ mapTuple (fromJust . flip lookup makeChCmd) playmode
+    -- board <- return $ initialBoard { ch = channels }
     let scaling = (* gridSize gameConfig)
-    -- initialize channels
-    mode <- return $ mapTuple players $ opponent initialBoard
-    channels <- (,) <$> maybeNewChan (fst mode) <*> maybeNewChan (snd mode)
     playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ dimension gameConfig)
            (background gameConfig)
            (pollInterval gameConfig)
