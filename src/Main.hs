@@ -158,7 +158,10 @@ makeChCmd = [(Human, return Nothing), (AI, Just <$> newTChanIO)]
 main :: IO ()
 main = do
     let playmode = mapTuple players . opponent $ initialBoard
-    let channels = sequence $ mapTuple (fromJust . flip lookup makeChCmd) playmode
+    let ch =  mapTuple (fromJust . flip lookup makeChCmd) playmode
+    channels <- fst ch >>= \c' -> snd ch >>= \c'' -> return (c', c'')
+    board <- return $ initialBoard {ch = channels }
+    
     -- board <- return $ initialBoard { ch = channels }
     let scaling = (* gridSize gameConfig)
     playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ dimension gameConfig)
