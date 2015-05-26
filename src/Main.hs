@@ -40,6 +40,7 @@ data Opponent = Opponent
 data Board = Board
     {
         opponent    :: (Opponent, Opponent)
+    ,   totalMoves  :: Int
     ,   win         :: Set Pos
     ,   ch          :: (Maybe ([TChan Message]), Maybe ([TChan Message]))
     }
@@ -70,6 +71,10 @@ walkDirection set rng position@(x, y) (deltax, deltay) =
                     (x' + inc * deltax, y' + inc * deltay) inc
             else mempty
     in (oneDirection position 1) <> (oneDirection position (-1))
+
+checkTieCondition board =
+    (fst $ dimension gameConfig) * (snd $ dimension gameConfig) <=
+    totalMoves board
 
 --
 -- checkWinCondition locations dimension new-stone set-connected-to-the-new-stone.
@@ -126,6 +131,7 @@ nextState board pos = do
     if withinBoard dimBoard pos &&
        pos `Data.Set.notMember` allstones
         then return (board {
+                totalMoves = totalMoves board + 1,
                 opponent = swap ((fst $ opponent board)
                                     { stoneSet = update },
                                  (snd $ opponent board)),
@@ -136,6 +142,7 @@ nextState board pos = do
 -- Capture left mouse button release event.
 input :: Event -> Board -> IO Board
 input _ board | not . null . win $ board = return board
+input _ board | checkTieCondition board  = return board
 input _ board | (players . fst . opponent $ board) == AI = return board
 input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
     let sc = fromIntegral $ gridSize gameConfig
@@ -159,17 +166,38 @@ step _ board = do
     maybeMsg <- atomically $ tryReadTChan chRx
     if not $ isJust maybeMsg
         then return board
-    else if not . null . win $ board
-        then atomically $ writeTChan chTx Lose >> return board
-        else case fromJust maybeMsg of
-                Move pos ->
-                    do  newBoard <- nextAIMove pos board
-                        let peer = fst . ch $ newBoard
-                        when (isJust peer) $
-                            atomically $ writeTChan
-                            (headEx . fromJust $ peer) $ fromJust maybeMsg
-                        return newBoard
-                _       -> return board
+        else stepUnblocked board (fromJust maybeMsg)
+
+stepUnblocked :: Board -> Message -> IO Board
+stepUnblocked board msg =
+    let
+        [chTx, chRx] = fromJust . fst . ch $ board
+    in  if checkTieCondition board
+        then do atomically $ writeTChan chTx Tie
+                let peer = snd $ ch board
+                when (isJust peer) $
+                    atomically $ writeTChan (headEx $ fromJust peer) Tie
+                return board
+        else if not . null . win $ board
+        then do atomically $ writeTChan chTx Lose
+                let peer = snd $ ch board
+                when (isJust peer) $
+                    atomically $ writeTChan (headEx $ fromJust peer) Win
+                return board
+        else
+            case msg of
+            Move pos ->
+                do  newBoard <- nextAIMove pos board
+                    let peer = fst . ch $ newBoard
+                    when (not . null . win $ newBoard) $
+                        atomically $ writeTChan chTx Win
+                    when (checkTieCondition newBoard) $
+                        atomically $ writeTChan chTx Tie
+                    when (isJust peer) $
+                        atomically $ writeTChan
+                        (headEx . fromJust $ peer) msg
+                    return newBoard
+            _       -> return board
 
 nextMove :: Set (Int, Int) -> IO (Int, Int)
 nextMove legalMoves = do
@@ -184,10 +212,10 @@ runAI :: [TChan Message] -> Set (Int, Int) -> IO ()
 runAI channels legalMoves = do
     let [chRx, chTx] = channels
     msg <- atomically $ readTChan chRx
-    print msg
     case msg of
-        Win      -> putStrLn "Win"  >> return ()
-        Lose     -> putStrLn "Lose" >> return ()
+        Win      -> putStrLn "CLIENT Win"  >> return ()
+        Lose     -> putStrLn "CLIENT Lose" >> return ()
+        Tie      -> putStrLn "Client Tie"  >> return ()
         Start    -> do
             p  <- nextMove legalMoves
             atomically $ writeTChan chTx $ Move p
@@ -238,13 +266,14 @@ main = do
 initialBoard = Board
     {
         opponent  = (Opponent mempty black AI, Opponent mempty white AI)
+    ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
     }
 
 gameConfig = Config
     {
-        dimension  = (13, 13)
+        dimension  = (7, 7)
     ,   gridSize   = 50
     ,   background = makeColor 0.86 0.71 0.52 0.50
     ,   stoneSize  = fromRational $ 4 % 5
