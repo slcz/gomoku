@@ -16,7 +16,7 @@ import qualified Data.Set
 import Data.Tuple
 import Data.Ratio
 
-type Range = (Int, Int)
+type Dimension = (Int, Int)
 type Pos   = (Int, Int)
 
 data Player = HUMAN | MACHINE deriving (Eq, Show)
@@ -37,7 +37,7 @@ data Board = Board
 data Config = Config
     {
         gridSize     :: Int
-    ,   range        :: Range
+    ,   dimension    :: Dimension
     ,   background   :: Color
     ,   stoneSize    :: Float
     ,   markSize     :: Float
@@ -51,7 +51,7 @@ withinBoard (dx, dy) (x, y) = x >= 0 && y >= 0 && x < dx && y < dy
 -- maps f to a tuple.
 mapTuple f = f *** f
 
-walkDirection :: Set Pos -> Range -> Pos -> Pos -> Set Pos
+walkDirection :: Set Pos -> Dimension -> Pos -> Pos -> Set Pos
 walkDirection set rng position@(x, y) (deltax, deltay) =
     let oneDirection position'@(x', y') inc =
          if withinBoard rng position'
@@ -62,11 +62,11 @@ walkDirection set rng position@(x, y) (deltax, deltay) =
     in (oneDirection position 1) <> (oneDirection position (-1))
 
 --
--- checkWinCondition locations range new-stone set-connected-to-the-new-stone.
+-- checkWinCondition locations dimension new-stone set-connected-to-the-new-stone.
 -- A stone is connected to another if it's adjacent
 -- either horizontally, vertially or diagnoally.
 --
-checkWinCondition :: Set Pos -> Range -> Pos -> Set Pos
+checkWinCondition :: Set Pos -> Dimension -> Pos -> Set Pos
 checkWinCondition set rng position =
     let dir :: [Pos]
         dir = [(1, 0), (0, 1), (1, 1), ((-1), 1)]
@@ -78,7 +78,7 @@ instance Semigroup Picture
 
 -- convinent function to applies offset and locate the board to the
 -- center of screen
-(shiftx, shifty) = mapTuple shiftFun $ range gameConfig where
+(shiftx, shifty) = mapTuple shiftFun $ dimension gameConfig where
     shiftFun = negate . fromIntegral . (* (gridSize gameConfig `div` 2))
 
 -- Draw board and stones. First draws grid, then stones of white and black,
@@ -112,7 +112,7 @@ input :: Event -> Board -> IO Board
 input _ board | not . null . win $ board = return board
 input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey))
     board = return $ do
-    let Config gs' rangeBoard _ ss mark _ _ = gameConfig
+    let Config gs' dimBoard _ ss mark _ _ = gameConfig
         sc = fromIntegral gs'
         stones   = stoneSet $ fst $ opponent board
         allstones = uncurry union $ mapTuple stoneSet $ opponent board
@@ -120,12 +120,12 @@ input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey))
         -- pos@(x, y) is normalized position of the move.
         pos@(x, y) = (snap (mousex - shiftx), snap (mousey - shifty))
         update = pos `Data.Set.insert` stones
-    if withinBoard rangeBoard pos &&
+    if withinBoard dimBoard pos &&
        pos `Data.Set.notMember` allstones
         then board {
             opponent = swap ((fst $ opponent board) { stoneSet = update },
                              (snd $ opponent board)),
-            win  = checkWinCondition update rangeBoard pos }
+            win  = checkWinCondition update dimBoard pos }
         else board
 input _ board = return board
 
@@ -139,7 +139,7 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        range     = (13, 13)
+        dimension = (13, 13)
     ,   gridSize  = 50
     ,   background= makeColor 0.86 0.71 0.52 0.50
     ,   stoneSize = fromRational $ 4 % 5
@@ -150,7 +150,7 @@ gameConfig = Config
 
 main = do
     let scaling = (* gridSize gameConfig)
-    playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ range gameConfig)
+    playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ dimension gameConfig)
            (background gameConfig)
            (pollInterval gameConfig)
            initialBoard draw input step
