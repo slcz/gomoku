@@ -17,6 +17,7 @@ import Data.Tuple
 import Data.Ratio
 import Data.Maybe
 import Control.Concurrent.STM.TChan
+import Control.Concurrent
 
 type Dimension = (Int, Int)
 type Pos = (Int, Int)
@@ -128,7 +129,8 @@ input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey))
         then board {
             opponent = swap ((fst $ opponent board) { stoneSet = update },
                              (snd $ opponent board)),
-            win  = checkWinCondition update dimBoard pos }
+            win  = checkWinCondition update dimBoard pos,
+            ch   = swap $ ch board }
         else board
 input _ board = return board
 
@@ -152,14 +154,20 @@ gameConfig = Config
     ,   winCondition = 5 -- Win condition: 5 stones connected
     }
 
-makeChCmd :: [(Player, IO (Maybe (TChan a)))]
-makeChCmd = [(Human, return Nothing), (AI, Just <$> newTChanIO)]
+makeChTbl :: [(Player, IO (Maybe (TChan a)))]
+makeChTbl = [(Human, return Nothing), (AI, Just <$> newTChanIO)]
+
+runAI channel = return ()
 
 main :: IO ()
 main = do
     let playmode = mapTuple players . opponent $ initialBoard
-    let ch =  mapTuple (fromJust . flip lookup makeChCmd) playmode
-    channels <- fst ch >>= \c' -> snd ch >>= \c'' -> return (c', c'')
+        ch =  mapTuple (fromJust . flip lookup makeChTbl) playmode
+    channels <- (uncurry $ liftM2 (,)) ch
+    let f c = case c of
+                Just ch'-> (forkIO $ runAI ch') >> return ()
+                Nothing -> return ()
+    k <- (uncurry $ liftM2 ((,) . f)) ch
     board <- return $ initialBoard {ch = channels }
     
     -- board <- return $ initialBoard { ch = channels }
