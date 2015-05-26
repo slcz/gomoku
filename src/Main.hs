@@ -159,6 +159,7 @@ makeChCmd = [(Human, return Nothing), (AI, Just <$> newTChanIO)]
 main :: IO ()
 main = do
     let playmode = mapTuple players . opponent $ initialBoard
+    let channels = sequence $ mapTuple (fromJust . flip lookup makeChCmd) playmode
     let scaling = (* gridSize gameConfig)
     -- initialize channels
     mode <- return $ mapTuple players $ opponent initialBoard
