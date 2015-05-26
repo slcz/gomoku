@@ -117,8 +117,8 @@ draw board = return $ translate shiftx shifty pic where
                                         ((fromIntegral gs) * mark))
                     |   (mx, my) <- toList $ win board]
 
-nextStep :: Board -> Pos -> IO (Board, Bool)
-nextStep board pos = do
+nextState :: Board -> Pos -> IO (Board, Bool)
+nextState board pos = do
     let Config gs' dimBoard _ ss mark _ _ = gameConfig
         stones   = stoneSet $ fst $ opponent board
         update = pos `Data.Set.insert` stones
@@ -142,7 +142,7 @@ input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
         snap     = floor . (/ sc)
         -- pos@(x, y) is normalized position of the move.
         pos@(x, y) = (snap (mousex - shiftx), snap (mousey - shifty))
-    (newBoard, legal) <- nextStep board pos
+    (newBoard, legal) <- nextState board pos
     when legal $ do
         let msgch = snd $ ch board
         when (isJust msgch) $
@@ -150,35 +150,26 @@ input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
     return newBoard
 input _ board = return board
 
-nextAIMove (Move pos) board = fst <$> nextStep board pos
-nextAIMove _ board = return board
+nextAIMove pos board = fst <$> nextState board pos
 
 step :: Float -> Board -> IO Board
 step _ board | (players . fst . opponent $ board) == Human = return board
 step _ board = do
     let [chTx, chRx] = fromJust . fst . ch $ board
-    msg <- atomically $ readTChan chRx
-    if not . null . win $ board
-        then atomically $ writeTChan chTx Win >> return board
-        else nextAIMove msg board
-
-initialBoard = Board
-    {
-        opponent  = (Opponent mempty black Human, Opponent mempty white AI)
-    ,   win       = mempty
-    ,   ch        = (Nothing, Nothing)
-    }
-
-gameConfig = Config
-    {
-        dimension  = (13, 13)
-    ,   gridSize   = 50
-    ,   background = makeColor 0.86 0.71 0.52 0.50
-    ,   stoneSize  = fromRational $ 4 % 5
-    ,   markSize   = fromRational $ 1 % 6
-    ,   pollInterval = 200
-    ,   winCondition = 5 -- Win condition: 5 stones connected
-    }
+    maybeMsg <- atomically $ tryReadTChan chRx
+    if not $ isJust maybeMsg
+        then return board
+    else if not . null . win $ board
+        then atomically $ writeTChan chTx Lose >> return board
+        else case fromJust maybeMsg of
+                Move pos ->
+                    do  newBoard <- nextAIMove pos board
+                        let peer = fst . ch $ newBoard
+                        when (isJust peer) $
+                            atomically $ writeTChan
+                            (headEx . fromJust $ peer) $ fromJust maybeMsg
+                        return newBoard
+                _       -> return board
 
 nextMove :: Set (Int, Int) -> IO (Int, Int)
 nextMove legalMoves = do
@@ -193,10 +184,14 @@ runAI :: [TChan Message] -> Set (Int, Int) -> IO ()
 runAI channels legalMoves = do
     let [chRx, chTx] = channels
     msg <- atomically $ readTChan chRx
+    print msg
     case msg of
         Win      -> putStrLn "Win"  >> return ()
         Lose     -> putStrLn "Lose" >> return ()
-        Start    -> nextMove legalMoves >> runAI channels legalMoves
+        Start    -> do
+            p  <- nextMove legalMoves
+            atomically $ writeTChan chTx $ Move p
+            runAI channels $ delete p legalMoves
         Move pos -> do
             lm <- return $ delete pos legalMoves
             p  <- nextMove lm
@@ -216,6 +211,7 @@ main = do
 
     -- create channels for AIs
     channels <- (uncurry $ liftM2 (,)) ch
+    print (isJust $ fst channels, isJust $ snd channels)
 
     -- fork tasks for AIs
     let legalMoves = Data.Set.fromList [ (x, y) |
@@ -225,15 +221,35 @@ main = do
         startIO maybech = case maybech of
                             Nothing-> return ()
                             Just c -> forkIO (runAI c legalMoves) >> return ()
-    startIO $ fst channels
-    startIO $ snd channels
+    (startIO $ fst channels) >> (startIO $ snd channels)
     board <- return $ initialBoard {ch = channels }
 
-    -- Jump start the first AI
+    -- Sending message to jumpstart the first AI
     atomically $ mapM_ (\x -> writeTChan (headEx x) Start) $ fst channels
     
     let scaling = (* gridSize gameConfig)
-    playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ dimension gameConfig)
+    playIO (InWindow "GOMOKU" (1, 1) $
+                mapTuple scaling $ dimension gameConfig)
            (background gameConfig)
            (pollInterval gameConfig)
            board draw input step
+
+-- Initial configurations
+initialBoard = Board
+    {
+        opponent  = (Opponent mempty black AI, Opponent mempty white AI)
+    ,   win       = mempty
+    ,   ch        = (Nothing, Nothing)
+    }
+
+gameConfig = Config
+    {
+        dimension  = (13, 13)
+    ,   gridSize   = 50
+    ,   background = makeColor 0.86 0.71 0.52 0.50
+    ,   stoneSize  = fromRational $ 4 % 5
+    ,   markSize   = fromRational $ 1 % 6
+    ,   pollInterval = 200
+    ,   winCondition = 5 -- Win condition: 5 stones connected
+    }
+
