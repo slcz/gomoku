@@ -15,23 +15,25 @@ import Graphics.Gloss.Interface.IO.Game hiding (Vector)
 import qualified Data.Set
 import Data.Tuple
 import Data.Ratio
+import Data.Maybe
+import Control.Concurrent.STM.TChan
 
 type Dimension = (Int, Int)
-type Pos   = (Int, Int)
+type Pos = (Int, Int)
 
-data Player = HUMAN | MACHINE deriving (Eq, Show)
+data Player = Human | AI deriving (Eq)
 
 data Opponent = Opponent
     {
         stoneSet   :: Set Pos
     ,   stoneColor :: Color
-    ,   player     :: Player
-    } deriving (Show)
+    ,   players    :: Player
+    }
 
 data Board = Board
     {
-        opponent     :: (Opponent, Opponent)
-    ,   win          :: Set Pos
+        opponent    :: (Opponent, Opponent)
+    ,   win         :: Set Pos
     }
 
 data Config = Config
@@ -133,7 +135,7 @@ step _ = return
 
 initialBoard = Board
     {
-        opponent  = (Opponent mempty black HUMAN, Opponent mempty white HUMAN)
+        opponent  = (Opponent mempty black Human, Opponent mempty white AI)
     ,   win       = mempty
     }
 
@@ -148,8 +150,19 @@ gameConfig = Config
     ,   winCondition = 5 -- Win condition: 5 stones connected
     }
 
+maybeNewChan mode | mode == Human = return Nothing
+maybeNewChan mode | mode == AI = Just <$> newTChanIO
+
+makeChCmd :: [(Player, IO (Maybe (TChan a)))]
+makeChCmd = [(Human, return Nothing), (AI, Just <$> newTChanIO)]
+
+main :: IO ()
 main = do
+    let playmode = mapTuple players . opponent $ initialBoard
     let scaling = (* gridSize gameConfig)
+    -- initialize channels
+    mode <- return $ mapTuple players $ opponent initialBoard
+    channels <- (,) <$> maybeNewChan (fst mode) <*> maybeNewChan (snd mode)
     playIO (InWindow "GOMOKU" (1, 1) $ mapTuple scaling $ dimension gameConfig)
            (background gameConfig)
            (pollInterval gameConfig)
