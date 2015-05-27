@@ -4,8 +4,9 @@
 -- @
 -- Release Notes:
 -- For 0.1.0.0
--- Initial checkin, human to human.
+--     Initial checkin, human to human.
 --
+--------------------------------------------------------------------------------
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -62,9 +63,9 @@ withinBoard (dx, dy) (x, y) = x >= 0 && y >= 0 && x < dx && y < dy
 mapTuple f = f *** f
 
 walkDirection :: Set Pos -> Dimension -> Pos -> Pos -> Set Pos
-walkDirection set rng position@(x, y) (deltax, deltay) =
+walkDirection set dimension position@(x, y) (deltax, deltay) =
     let oneDirection position'@(x', y') inc =
-         if withinBoard rng position'
+         if withinBoard dimension position'
            && position' `member` set
             then position' `Data.Set.insert` oneDirection
                     (x' + inc * deltax, y' + inc * deltay) inc
@@ -86,10 +87,10 @@ getGameEndMsg board | isTie board = (Tie, Tie)
 -- either horizontally, vertially or diagnoally.
 --
 checkWinCondition :: Set Pos -> Dimension -> Pos -> Set Pos
-checkWinCondition set rng position =
+checkWinCondition set dimension position =
     let dir :: [Pos]
         dir = [(1, 0), (0, 1), (1, 1), ((-1), 1)]
-        walk = walkDirection set rng position
+        walk = walkDirection set dimension position
     in  unions . filter ((==winCondition gameConfig) . length) . map walk $ dir
 
 -- Declare picture as semigroup in order to use <>
