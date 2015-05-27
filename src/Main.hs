@@ -65,12 +65,12 @@ withinBoard (dx, dy) (x, y) = x >= 0 && y >= 0 && x < dx && y < dy
 mapTuple f = f *** f
 
 walkDirection :: Set Pos -> Dimension -> Pos -> Pos -> Set Pos
-walkDirection set dimension position@(x, y) (deltax, deltay) =
-    let oneDirection position'@(x', y') inc =
+walkDirection set dimension position (deltax, deltay) =
+    let oneDirection position'@(x, y) inc =
          if withinBoard dimension position'
            && position' `member` set
             then position' `Data.Set.insert` oneDirection
-                    (x' + inc * deltax, y' + inc * deltay) inc
+                    (x + inc * deltax, y + inc * deltay) inc
             else mempty
     in (oneDirection position 1) <> (oneDirection position (-1))
 
