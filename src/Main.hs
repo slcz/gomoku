@@ -54,6 +54,8 @@ data Config = Config
     ,   markSize     :: Float
     ,   pollInterval :: Int
     ,   winCondition :: Int
+    ,   margin       :: Int
+    ,   textScale    :: Float
     }
 
 -- check x, y is within the board boundary.
@@ -77,8 +79,8 @@ isTie board =
 
 isWin board = not . null . win $ board
 
-getGameEndMsg board | isTie board = (Tie, Tie)
-                    | isWin board = (Lose, Win)
+getGameEndMsg board | isWin board = (Lose, Win)
+                    | isTie board = (Tie, Tie)
                     | otherwise   = (Bug, Bug)
 
 --
@@ -106,8 +108,8 @@ instance Semigroup Picture
 -- side).
 draw :: Board -> IO Picture
 draw board = return $ translate shiftx shifty pic where
-    Config gs (boundaryX, boundaryY) _ ss mark _ _ = gameConfig
-    pic = grid <> plays <> wins
+    Config gs (boundaryX, boundaryY) _ ss mark _ _ margin ts = gameConfig
+    pic = grid <> plays <> wins <> context <> end
     conv = map $ map $ mapTuple $ fromIntegral . (* gs)
     gx = conv [[(x, 0), (x, boundaryY)] | x <- [0 .. boundaryX]]
     gy = conv [[(0, y), (boundaryX, y)] | y <- [0 .. boundaryY]]
@@ -116,8 +118,7 @@ draw board = return $ translate shiftx shifty pic where
     center = fromIntegral . (+ (gs `div` 2)) . (* gs)
     playsfunc location = mconcat
         [   translate (center mx) (center my) $
-            color (stoneColor party)
-            (thickCircle 1 ((fromIntegral gs) * ss))
+            color (stoneColor party) stone
         |   (mx, my) <- toList $ stoneSet party] where
         party = location $ opponent board
     plays = playsfunc fst <> playsfunc snd
@@ -125,11 +126,22 @@ draw board = return $ translate shiftx shifty pic where
                         color red
                         (rectangleSolid ((fromIntegral gs) * mark)
                                         ((fromIntegral gs) * mark))
-                    |   (mx, my) <- toList $ win board]
+                    |   (mx, my) <- toList $ win board ]
+    d = dimension gameConfig
+    contextX = fromIntegral $ gs * (fst d + 1) + margin
+    contextY = fromIntegral $ gs * (snd d `div` 2)
+    context = translate contextX contextY $
+        color (stoneColor $ fst $ opponent board) stone
+    stone = thickCircle 1 ((fromIntegral gs) * ss)
+
+    m = if isTie board || isWin board
+            then show $ fst $ getGameEndMsg board
+            else ""
+    end = translate (contextX + fromIntegral gs) contextY $ scale ts ts $ text m
 
 nextState :: Board -> Pos -> IO (Board, Bool)
 nextState board pos = do
-    let Config gs' dimBoard _ ss mark _ _ = gameConfig
+    let Config gs' dimBoard _ ss mark _ _ _ _ = gameConfig
         stones   = stoneSet $ fst $ opponent board
         update = pos `Data.Set.insert` stones
         allstones = uncurry union $ mapTuple stoneSet $ opponent board
@@ -221,7 +233,6 @@ runAI channels legalMoves = do
             lm <- return $ delete pos legalMoves
             doMove channels lm
         m -> do
-            putStrLn ("CLIENT GOT MESSAGE: " ++ tshow m)
             -- echo finishing condition back
             atomically $ writeTChan chTx m
             return ()
@@ -239,7 +250,6 @@ main = do
 
     -- create channels for AIs
     channels <- (uncurry $ liftM2 (,)) ch
-    print (isJust $ fst channels, isJust $ snd channels)
 
     -- fork tasks for AIs
     let legalMoves = Data.Set.fromList [ (x, y) |
@@ -265,7 +275,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        opponent  = (Opponent mempty black Human, Opponent mempty white AI)
+        opponent  = (Opponent mempty black AI, Opponent mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
@@ -273,12 +283,14 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        dimension  = (7, 7)
+        dimension  = (15, 15)
     ,   gridSize   = 50
     ,   background = makeColor 0.86 0.71 0.52 0.50
     ,   stoneSize  = fromRational $ 4 % 5
     ,   markSize   = fromRational $ 1 % 6
     ,   pollInterval = 200
-    ,   winCondition = 2 -- Win condition: 5 stones connected
+    ,   winCondition = 5 -- Win condition: 5 stones connected
+    ,   margin     = 20
+    ,   textScale  = 0.2
     }
 
