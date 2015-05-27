@@ -1,3 +1,4 @@
+--------------------------------------------------------------------------------
 --
 -- | Gomoku is a simple board game using haskell gloss library.
 -- @
@@ -18,9 +19,7 @@ import Data.Ratio
 import Data.Maybe
 import Data.List ((!!))
 import Data.Set (fromList, delete)
-import Control.Concurrent.STM.TChan
 import Control.Concurrent
-import Debug.Trace
 import System.Random
 
 type Dimension = (Int, Int)
@@ -28,7 +27,7 @@ type Pos = (Int, Int)
 
 data Player = Human | AI deriving (Eq, Show)
 
-data Message = Move Pos | Win | Lose | Tie | Start deriving (Eq, Show)
+data Message = Move Pos | Bug | Win | Lose | Tie | Start deriving (Eq, Show)
 
 data Opponent = Opponent
     {
@@ -72,12 +71,17 @@ walkDirection set rng position@(x, y) (deltax, deltay) =
             else mempty
     in (oneDirection position 1) <> (oneDirection position (-1))
 
-checkTieCondition board =
-    (fst $ dimension gameConfig) * (snd $ dimension gameConfig) <=
-    totalMoves board
+isTie board =
+    let d = dimension gameConfig in (fst d) * (snd d) <= totalMoves board
+
+isWin board = not . null . win $ board
+
+getGameEndMsg board | isTie board = (Tie, Tie)
+                    | isWin board = (Lose, Win)
+                    | otherwise   = (Bug, Bug)
 
 --
--- checkWinCondition locations dimension new-stone set-connected-to-the-new-stone.
+-- checkWinCondition locations dimension move set-connected-to-the-move
 -- A stone is connected to another if it's adjacent
 -- either horizontally, vertially or diagnoally.
 --
@@ -142,7 +146,7 @@ nextState board pos = do
 -- Capture left mouse button release event.
 input :: Event -> Board -> IO Board
 input _ board | not . null . win $ board = return board
-input _ board | checkTieCondition board  = return board
+input _ board | isTie board  = return board
 input _ board | (players . fst . opponent $ board) == AI = return board
 input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
     let sc = fromIntegral $ gridSize gameConfig
@@ -172,27 +176,22 @@ stepUnblocked :: Board -> Message -> IO Board
 stepUnblocked board msg =
     let
         [chTx, chRx] = fromJust . fst . ch $ board
-    in  if checkTieCondition board
-        then do atomically $ writeTChan chTx Tie
-                let peer = snd $ ch board
+    in if isTie board || isWin board
+        then
+            do  (p', p'') <- return $ getGameEndMsg board
+                atomically $ writeTChan chTx p'
+                peer <- return $ snd $ ch board
                 when (isJust peer) $
-                    atomically $ writeTChan (headEx $ fromJust peer) Tie
-                return board
-        else if not . null . win $ board
-        then do atomically $ writeTChan chTx Lose
-                let peer = snd $ ch board
-                when (isJust peer) $
-                    atomically $ writeTChan (headEx $ fromJust peer) Win
+                    atomically $ writeTChan (headEx $ fromJust peer) p'' 
                 return board
         else
             case msg of
             Move pos ->
                 do  newBoard <- nextAIMove pos board
-                    let peer = fst . ch $ newBoard
-                    when (not . null . win $ newBoard) $
-                        atomically $ writeTChan chTx Win
-                    when (checkTieCondition newBoard) $
-                        atomically $ writeTChan chTx Tie
+                    peer <- return $ fst $ ch newBoard
+                    when (isWin newBoard || isTie newBoard) $
+                        atomically $
+                            writeTChan chTx (snd $ getGameEndMsg newBoard)
                     when (isJust peer) $
                         atomically $ writeTChan
                         (headEx . fromJust $ peer) msg
@@ -206,25 +205,25 @@ nextMove legalMoves = do
     idx <- randomRIO (0, len - 1) :: IO Int
     e   <- return $ l !!idx
     return e
-    -- choice
 
 runAI :: [TChan Message] -> Set (Int, Int) -> IO ()
 runAI channels legalMoves = do
     let [chRx, chTx] = channels
+        doMove ch moves = do
+            p <- nextMove moves
+            atomically $ writeTChan chTx $ Move p
+            runAI ch $ delete p moves
     msg <- atomically $ readTChan chRx
     case msg of
-        Win      -> putStrLn "CLIENT Win"  >> return ()
-        Lose     -> putStrLn "CLIENT Lose" >> return ()
-        Tie      -> putStrLn "Client Tie"  >> return ()
-        Start    -> do
-            p  <- nextMove legalMoves
-            atomically $ writeTChan chTx $ Move p
-            runAI channels $ delete p legalMoves
+        Start -> doMove channels legalMoves
         Move pos -> do
             lm <- return $ delete pos legalMoves
-            p  <- nextMove lm
-            atomically $ writeTChan chTx $ Move p
-            runAI channels $ delete p legalMoves
+            doMove channels lm
+        m -> do
+            putStrLn ("CLIENT GOT MESSAGE: " ++ tshow m)
+            -- echo finishing condition back
+            atomically $ writeTChan chTx m
+            return ()
 
 newTChanIOpair :: IO [TChan a]
 newTChanIOpair = newTChanIO >>= \a -> newTChanIO >>= \b -> return [a, b]
@@ -265,7 +264,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        opponent  = (Opponent mempty black AI, Opponent mempty white AI)
+        opponent  = (Opponent mempty black Human, Opponent mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
@@ -279,6 +278,6 @@ gameConfig = Config
     ,   stoneSize  = fromRational $ 4 % 5
     ,   markSize   = fromRational $ 1 % 6
     ,   pollInterval = 200
-    ,   winCondition = 5 -- Win condition: 5 stones connected
+    ,   winCondition = 2 -- Win condition: 5 stones connected
     }
 
