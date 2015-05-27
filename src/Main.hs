@@ -109,12 +109,17 @@ instance Semigroup Picture
 draw :: Board -> IO Picture
 draw board = return $ translate shiftx shifty pic where
     Config gs (boundaryX, boundaryY) _ ss mark _ _ margin ts = gameConfig
-    pic = grid <> plays <> wins <> context <> end
-    conv = map $ map $ mapTuple $ fromIntegral . (* gs)
-    gx = conv [[(x, 0), (x, boundaryY)] | x <- [0 .. boundaryX]]
-    gy = conv [[(0, y), (boundaryX, y)] | y <- [0 .. boundaryY]]
+
+    pic = grid <> plays <> wins <> context <> gameInfo
+
+    stone = thickCircle 1 ((fromIntegral gs) * ss)
+    scaleGrid = map $ map $ mapTuple $ fromIntegral . (* gs)
+
+    gx = scaleGrid [[(x, 0), (x, boundaryY)] | x <- [0 .. boundaryX]]
+    gy = scaleGrid [[(0, y), (boundaryX, y)] | y <- [0 .. boundaryY]]
     gridfunc = mconcat . map (color black . line)
     grid = gridfunc gx <> gridfunc gy
+
     center = fromIntegral . (+ (gs `div` 2)) . (* gs)
     playsfunc location = mconcat
         [   translate (center mx) (center my) $
@@ -122,22 +127,25 @@ draw board = return $ translate shiftx shifty pic where
         |   (mx, my) <- toList $ stoneSet party] where
         party = location $ opponent board
     plays = playsfunc fst <> playsfunc snd
+
     wins  = mconcat [   translate (center mx) (center my) $
                         color red
                         (rectangleSolid ((fromIntegral gs) * mark)
                                         ((fromIntegral gs) * mark))
                     |   (mx, my) <- toList $ win board ]
+
     d = dimension gameConfig
     contextX = fromIntegral $ gs * (fst d + 1) + margin
     contextY = fromIntegral $ gs * (snd d `div` 2)
     context = translate contextX contextY $
         color (stoneColor $ fst $ opponent board) stone
-    stone = thickCircle 1 ((fromIntegral gs) * ss)
 
-    m = if isTie board || isWin board
+    m = show (totalMoves board) ++ "  " ++
+        if isTie board || isWin board
             then show $ fst $ getGameEndMsg board
             else ""
-    end = translate (contextX + fromIntegral gs) contextY $ scale ts ts $ text m
+    gameInfo = translate (contextX + fromIntegral gs) contextY $
+                scale ts ts $ text m
 
 nextState :: Board -> Pos -> IO (Board, Bool)
 nextState board pos = do
