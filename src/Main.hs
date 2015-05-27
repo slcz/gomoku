@@ -56,6 +56,7 @@ data Config = Config
     ,   winCondition :: Int
     ,   margin       :: Int
     ,   textScale    :: Float
+    ,   delay        :: Int
     }
 
 -- check x, y is within the board boundary.
@@ -108,7 +109,7 @@ instance Semigroup Picture
 -- side).
 draw :: Board -> IO Picture
 draw board = return $ translate shiftx shifty pic where
-    Config gs (boundaryX, boundaryY) _ ss mark _ _ margin ts = gameConfig
+    Config gs (boundaryX, boundaryY) _ ss mark _ _ margin ts _ = gameConfig
 
     pic = grid <> plays <> wins <> context <> gameInfo
 
@@ -149,7 +150,7 @@ draw board = return $ translate shiftx shifty pic where
 
 nextState :: Board -> Pos -> IO (Board, Bool)
 nextState board pos = do
-    let Config gs' dimBoard _ ss mark _ _ _ _ = gameConfig
+    let Config gs' dimBoard _ ss mark _ _ _ _ _ = gameConfig
         stones   = stoneSet $ fst $ opponent board
         update = pos `Data.Set.insert` stones
         allstones = uncurry union $ mapTuple stoneSet $ opponent board
@@ -206,6 +207,7 @@ stepUnblocked board msg =
                     atomically $ writeTChan (headEx $ fromJust peer) p'' 
                 return board
         else
+            (threadDelay $ delay gameConfig) >>
             case msg of
             Move pos ->
                 do  newBoard <- nextAIMove pos board
@@ -300,5 +302,6 @@ gameConfig = Config
     ,   winCondition = 5 -- Win condition: 5 stones connected
     ,   margin     = 20
     ,   textScale  = 0.2
+    ,   delay      = 500000
     }
 
