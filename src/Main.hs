@@ -27,20 +27,20 @@ import System.Random
 import Ai
 import Control.Monad.Trans.State.Lazy
 
-data Player = Human | AI deriving (Eq, Show)
+data PlayMode = Human | AI deriving (Eq, Show)
 
 data Message = Move Pos | Bug | Result GameResult | Start deriving (Eq, Show)
 
-data Opponent = Opponent
+data Player = Player
     {
         stoneSet   :: Set Pos
     ,   stoneColor :: Color
-    ,   players    :: Player
+    ,   playMode    :: PlayMode
     } deriving (Show)
 
 data Board = Board
     {
-        opponent    :: (Opponent, Opponent)
+        player    :: (Player, Player)
     ,   totalMoves  :: Int
     ,   win         :: Set Pos
     ,   ch          :: (Maybe ([TChan Message]), Maybe ([TChan Message]))
@@ -127,7 +127,7 @@ draw board = return $ translate shiftx shifty pic where
         [   translate (center mx) (center my) $
             color (stoneColor party) stone
         |   (mx, my) <- toList $ stoneSet party] where
-        party = location $ opponent board
+        party = location $ player board
     plays = playsfunc fst <> playsfunc snd
 
     wins  = mconcat [   translate (center mx) (center my) $
@@ -140,7 +140,7 @@ draw board = return $ translate shiftx shifty pic where
     contextX = fromIntegral $ gs * (fst d + 1) + margin
     contextY = fromIntegral $ gs * (snd d `div` 2)
     context = translate contextX contextY $
-        color (stoneColor $ fst $ opponent board) stone
+        color (stoneColor $ fst $ player board) stone
 
     m = show (totalMoves board) ++ "  " ++
         if isTie board || isWin board
@@ -152,16 +152,16 @@ draw board = return $ translate shiftx shifty pic where
 nextState :: Board -> Pos -> IO (Board, Bool)
 nextState board pos = do
     let Config gs' dimBoard _ ss mark _ _ _ _ _ = gameConfig
-        stones   = stoneSet $ fst $ opponent board
+        stones   = stoneSet $ fst $ player board
         update = pos `Data.Set.insert` stones
-        allstones = uncurry union $ mapTuple stoneSet $ opponent board
+        allstones = uncurry union $ mapTuple stoneSet $ player board
     if withinBoard dimBoard pos &&
        pos `Data.Set.notMember` allstones
         then return (board {
                 totalMoves = totalMoves board + 1,
-                opponent = swap ((fst $ opponent board)
+                player = swap ((fst $ player board)
                                     { stoneSet = update },
-                                 (snd $ opponent board)),
+                                 (snd $ player board)),
                 win  = checkWinCondition update dimBoard pos,
                 ch   = swap $ ch board }, True)
         else return (board, False)
@@ -170,7 +170,7 @@ nextState board pos = do
 input :: Event -> Board -> IO Board
 input _ board | not . null . win $ board = return board
 input _ board | isTie board  = return board
-input _ board | (players . fst . opponent $ board) == AI = return board
+input _ board | (playMode . fst . player $ board) == AI = return board
 input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
     let sc = fromIntegral $ gridSize gameConfig
         snap     = floor . (/ sc)
@@ -187,7 +187,7 @@ input _ board = return board
 nextAIMove pos board = fst <$> nextState board pos
 
 step :: Float -> Board -> IO Board
-step _ board | (players . fst . opponent $ board) == Human = return board
+step _ board | (playMode . fst . player $ board) == Human = return board
 step _ board = do
     let [chTx, chRx] = fromJust . fst . ch $ board
     maybeMsg <- atomically $ tryReadTChan chRx
@@ -252,12 +252,12 @@ startAI open channels = do
 newTChanIOpair :: IO [TChan a]
 newTChanIOpair = newTChanIO >>= \a -> newTChanIO >>= \b -> return [a, b]
 
-makeChTbl :: [(Player, IO (Maybe [TChan a]))]
+makeChTbl :: [(PlayMode, IO (Maybe [TChan a]))]
 makeChTbl = [(Human, return Nothing), (AI, Just <$> newTChanIOpair)]
 
 main :: IO ()
 main = do
-    let playmode = mapTuple players . opponent $ initialBoard
+    let playmode = mapTuple playMode . player $ initialBoard
         ch =  mapTuple (fromJust . flip lookup makeChTbl) playmode
 
     -- create channels for AIs
@@ -285,7 +285,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        opponent  = (Opponent mempty black AI, Opponent mempty white AI)
+        player  = (Player mempty black AI, Player mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
