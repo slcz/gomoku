@@ -10,6 +10,8 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
 
+module Main (main) where
+
 import Prelude()
 import ClassyPrelude
 import Graphics.Gloss hiding (Vector)
@@ -22,13 +24,12 @@ import Data.List ((!!))
 import Data.Set (fromList, delete)
 import Control.Concurrent
 import System.Random
-
-type Dimension = (Int, Int)
-type Pos = (Int, Int)
+import Ai
+import Control.Monad.Trans.State.Lazy
 
 data Player = Human | AI deriving (Eq, Show)
 
-data Message = Move Pos | Bug | Win | Lose | Tie | Start deriving (Eq, Show)
+data Message = Move Pos | Bug | Result GameResult | Start deriving (Eq, Show)
 
 data Opponent = Opponent
     {
@@ -80,8 +81,8 @@ isTie board =
 
 isWin board = not . null . win $ board
 
-getGameEndMsg board | isWin board = (Lose, Win)
-                    | isTie board = (Tie, Tie)
+getGameEndMsg board | isWin board = (Result GameLoss, Result GameWin)
+                    | isTie board = (Result GameTie, Result GameTie)
                     | otherwise   = (Bug, Bug)
 
 --
@@ -221,31 +222,32 @@ stepUnblocked board msg =
                     return newBoard
             _       -> return board
 
-nextMove :: Set (Int, Int) -> IO (Int, Int)
-nextMove legalMoves = do
-    let l   = toList legalMoves
-        len = length legalMoves
-    idx <- randomRIO (0, len - 1) :: IO Int
-    e   <- return $ l !!idx
-    return e
-
-runAI :: [TChan Message] -> Set (Int, Int) -> IO ()
-runAI channels legalMoves = do
+runAI :: AiState -> [TChan Message] -> IO AiState
+runAI state channels = do
     let [chRx, chTx] = channels
-        doMove ch moves = do
-            p <- nextMove moves
+        doMove ch state = do
+            (p, state') <- runStateT aiMove state
             atomically $ writeTChan chTx $ Move p
-            runAI ch $ delete p moves
+            runAI state' ch
     msg <- atomically $ readTChan chRx
     case msg of
-        Start -> doMove channels legalMoves
-        Move pos -> do
-            lm <- return $ delete pos legalMoves
-            doMove channels lm
+        Start    -> doMove channels state
+        Move pos -> do  state' <- execStateT (peerMove pos) state
+                        doMove channels state'
         m -> do
+            let r = case m of
+                        Result r' -> r'
+                        _         -> GameTie
+            state' <- execStateT (gameFinish r) state
             -- echo finishing condition back
             atomically $ writeTChan chTx m
-            return ()
+            return state'
+
+startAI :: Bool -> [TChan Message] -> IO ()
+startAI open channels = do
+    state <- aiInit (dimension gameConfig) open
+    runAI state channels
+    return ()
 
 newTChanIOpair :: IO [TChan a]
 newTChanIOpair = newTChanIO >>= \a -> newTChanIO >>= \b -> return [a, b]
@@ -262,14 +264,12 @@ main = do
     channels <- (uncurry $ liftM2 (,)) ch
 
     -- fork tasks for AIs
-    let legalMoves = Data.Set.fromList [ (x, y) |
-                                x <- [0 .. fst (dimension gameConfig) - 1],
-                                y <- [0 .. snd (dimension gameConfig) - 1]]
-        startIO :: Maybe [TChan Message] -> IO ()
-        startIO maybech = case maybech of
-                            Nothing-> return ()
-                            Just c -> forkIO (runAI c legalMoves) >> return ()
-    (startIO $ fst channels) >> (startIO $ snd channels)
+    let startIO :: Bool -> Maybe [TChan Message] -> IO ()
+        startIO open maybech =
+            case maybech of
+                Nothing-> return ()
+                Just c -> forkIO (startAI open c) >> return ()
+    (startIO True $ fst channels) >> (startIO False $ snd channels)
     board <- return $ initialBoard {ch = channels }
 
     -- Sending message to jumpstart the first AI
@@ -302,6 +302,6 @@ gameConfig = Config
     ,   winCondition = 5 -- Win condition: 5 stones connected
     ,   margin     = 20
     ,   textScale  = 0.2
-    ,   delay      = 500000
+    ,   delay      = 0
     }
 
