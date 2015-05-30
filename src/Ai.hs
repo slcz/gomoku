@@ -100,7 +100,7 @@ peerMove pos = do
     scans <- gets scan
     f'<- return $ insertSet p f
     modify' (\s -> s { available = deleteSet pos a, foe = f' })
-    print $ getFeatures p scans f' m con
+    zipWith (-) (getFeatures p scans f' m con) (getFeatures p scans f m con)
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
