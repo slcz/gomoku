@@ -23,11 +23,8 @@ data AiState = AiState
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
 
-pos2XY :: Int -> Dimension -> Pos
-pos2XY p d = (p `div` fst d, p `mod` snd d)
-
-xy2Pos :: Pos -> Dimension -> Int
-xy2Pos (x, y) d = x * fst d + y
+int2Pos d p = (p `div` fst d, p `mod` snd d)
+pos2Int d (x, y) = x * fst d + y
 
 -- board-dimension open-move?
 aiInit :: Dimension -> Bool -> IO AiState
@@ -51,14 +48,14 @@ aiMove = do
     idx <- liftIO $ (randomRIO (0, len - 1) :: IO Int)
     pos <- return (l !! idx)
     modify' (\s -> s { available = delete pos a, me = insert pos m })
-    return $ pos2XY pos d
+    return $ int2Pos d pos
 
 peerMove :: Pos -> StateT AiState IO ()
 peerMove pos = do
     a <- gets available
     f <- gets foe 
     d <- gets dimension
-    p <- return $ xy2Pos pos d
+    p <- return $ pos2Int d pos
     modify' (\s -> s { available = delete p a, foe = insert p f })
 
 gameFinish:: GameResult -> StateT AiState IO ()
