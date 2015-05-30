@@ -20,6 +20,7 @@ data AiState = AiState
     ,   me        :: IntSet
     ,   foe       :: IntSet
     ,   available :: Set Pos
+    ,   scan      :: [Scan]
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -31,7 +32,7 @@ pos2Int d (x, y) = y * wi d + x
 
 data Scan = Scan
     {
-        scanList :: Vector (Vector Int)
+        scanList :: Seq (Seq Int)
     ,   getLine  :: Int -> Int
     }
 
@@ -60,6 +61,7 @@ aiInit d o = return $ AiState
         ,   me        = mempty
         ,   foe       = mempty
         ,   available = a
+        ,   scan      = generateScanList d
         }
     where
     a = setFromList [(x, y) | x <- [0..fst d-1], y <- [0..snd d-1]]
@@ -85,5 +87,15 @@ peerMove pos = do
     p <- return $ pos2Int d pos
     modify' (\s -> s { available = deleteSet pos a, foe = insertSet p f })
 
-gameFinish:: GameResult -> StateT AiState IO ()
+gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
+
+-- return deltas of feature set
+getFeatures pos scans me foe = getFeatures' pos scans me foe
+                                (fromList $ take (2^5) $ repeat 0)
+
+getFeatures :: Int -> [Scan] -> IntSet -> IntSet -> Vector Int
+getFeatures' pos scans me foe feat = foldl' (getFeature me foe) feat scans
+
+getFeature :: IntSet -> IntSet -> Vector Int -> Scan -> Vector Int
+getFeature me foe feat (Scan sl ln) =  error "get"
