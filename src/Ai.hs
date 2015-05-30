@@ -1,11 +1,12 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Ai ( Pos, Dimension, aiInit, aiMove, peerMove, gameFinish, AiState,
             GameResult (..)) where
 
 import Prelude()
 import ClassyPrelude
--- import Data.IntSet
-import Data.List ((!!))
+import Data.List ((!!), iterate)
 import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
 
@@ -23,19 +24,43 @@ data AiState = AiState
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
 
-int2Pos d p = (p `div` fst d, p `mod` snd d)
-pos2Int d (x, y) = x * fst d + y
+wi d = fst d * 3
+
+int2Pos d p = (p `mod` wi d, p `div` wi d)
+pos2Int d (x, y) = y * wi d + x
+
+data Scan = Scan
+    {
+        scanList :: [[Int]]
+    ,   getLine  :: Int -> Int
+    }
+
+generateScanList :: Dimension -> [Scan]
+generateScanList d = [hScan, vScan, diagRScan, diagLScan] where
+    h' = snd d
+    w' = fst d
+    w  = wi  d
+    hScan = Scan (map (take w'.iterate (+1).(+w').(*w)) [0 .. h'-1]) (`div` w)
+    vScan = Scan (map (take h'.iterate (+w).(+w')) [0 .. w'-1]) (`mod` w)
+    dl = [0 .. w' + w' - 2] :: [Int]
+    drophead f = map drop (f [0..w'-1])
+    takehead f = map take (f [1..w'-1])
+    diagRScan = Scan (zipWith id (drophead reverse ++ takehead reverse)
+                (map (take w'.iterate (+(w+1)).(+1 )) dl)) (`mod` (w+1))
+    diagLScan = Scan (zipWith id (takehead id ++ drophead id)
+                (map (take w'.iterate (+(w-1)).(+w')) dl)) (`mod` (w-1))
 
 -- board-dimension open-move?
 aiInit :: Dimension -> Bool -> IO AiState
 aiInit d o = return $ AiState
-    {
-        dimension = d
-    ,   open      = o
-    ,   me        = mempty
-    ,   foe       = mempty
-    ,   available = a
-    } where
+        {
+            dimension = d
+        ,   open      = o
+        ,   me        = mempty
+        ,   foe       = mempty
+        ,   available = a
+        }
+    where
     a = setFromList [(x, y) | x <- [0..fst d-1], y <- [0..snd d-1]]
 
 aiMove :: StateT AiState IO Pos
