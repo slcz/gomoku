@@ -4,7 +4,7 @@ module Ai ( Pos, Dimension, aiInit, aiMove, peerMove, gameFinish, AiState,
 
 import Prelude()
 import ClassyPrelude
-import Data.IntSet
+-- import Data.IntSet
 import Data.List ((!!))
 import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
@@ -18,7 +18,7 @@ data AiState = AiState
     ,   open      :: Bool
     ,   me        :: IntSet
     ,   foe       :: IntSet
-    ,   available :: IntSet
+    ,   available :: Set Pos
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -36,19 +36,20 @@ aiInit d o = return $ AiState
     ,   foe       = mempty
     ,   available = a
     } where
-    a = Data.IntSet.fromList [0 .. fst d * snd d - 1]
+    a = setFromList [(x, y) | x <- [0..fst d-1], y <- [0..snd d-1]]
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
     a <- gets available
     m <- gets me
     d <- gets dimension
-    let l   = Data.IntSet.toList a
+    let l   = toList a
         len = length l
     idx <- liftIO $ (randomRIO (0, len - 1) :: IO Int)
-    pos <- return (l !! idx)
-    modify' (\s -> s { available = delete pos a, me = insert pos m })
-    return $ int2Pos d pos
+    pos <- return (l !! idx) :: StateT AiState IO Pos
+    pInt <- return $ pos2Int d pos
+    modify' (\s -> s { available = deleteSet pos a, me = insertSet pInt m })
+    return pos
 
 peerMove :: Pos -> StateT AiState IO ()
 peerMove pos = do
@@ -56,8 +57,7 @@ peerMove pos = do
     f <- gets foe 
     d <- gets dimension
     p <- return $ pos2Int d pos
-    modify' (\s -> s { available = delete p a, foe = insert p f })
+    modify' (\s -> s { available = deleteSet pos a, foe = insertSet p f })
 
 gameFinish:: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
-
