@@ -31,7 +31,7 @@ pos2Int d (x, y) = y * wi d + x
 
 data Scan = Scan
     {
-        scanList :: [[Int]]
+        scanList :: Vector (Vector Int)
     ,   getLine  :: Int -> Int
     }
 
@@ -40,15 +40,16 @@ generateScanList d = [hScan, vScan, diagRScan, diagLScan] where
     h' = snd d
     w' = fst d
     w  = wi  d
-    hScan = Scan (map (take w'.iterate (+1).(+w').(*w)) [0 .. h'-1]) (`div` w)
-    vScan = Scan (map (take h'.iterate (+w).(+w')) [0 .. w'-1]) (`mod` w)
+    fList = fromList . map fromList
+    hScan = Scan (fList$map (take w'.iterate (+1).(+w').(*w)) [0..h'-1]) (`div` w)
+    vScan = Scan (fList$map (take h'.iterate (+w).(+w')) [0..w'-1]) (`mod` w)
     dl = [0 .. w' + w' - 2] :: [Int]
     drophead f = map drop (f [0..w'-1])
     takehead f = map take (f [1..w'-1])
-    diagRScan = Scan (zipWith id (drophead reverse ++ takehead reverse)
-                (map (take w'.iterate (+(w+1)).(+1 )) dl)) (`mod` (w+1))
-    diagLScan = Scan (zipWith id (takehead id ++ drophead id)
-                (map (take w'.iterate (+(w-1)).(+w')) dl)) (`mod` (w-1))
+    gen filterF genF findF = Scan (fList $ zipWith id filterF
+                (map (take w'.iterate (+findF).genF) dl)) (`mod` findF)
+    diagRScan = gen (drophead reverse ++ takehead reverse) (+1) (w+1)
+    diagLScan = gen (takehead id ++ drophead id) (+w') (w-1)
 
 -- board-dimension open-move?
 aiInit :: Dimension -> Bool -> IO AiState
