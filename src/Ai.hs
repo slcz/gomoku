@@ -30,6 +30,7 @@ data AiState = AiState
     ,   available :: Seq (Pos, Int)
     ,   scan      :: [Scan]
     ,   featMap   :: (Vector Int, Int)
+    ,   feat      :: Vector Int
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -77,7 +78,8 @@ aiInit d con o =
         ,   foe       = mempty
         ,   available = a
         ,   scan      = generateScanList d
-        ,   featMap   = (fromList featureMapping, maximumEx featureMapping + 1)
+        ,   featMap   = (fromList featureMapping, m + 1)
+        ,   feat      = Data.Vector.replicate (m + m) 0
         }
     where
     a  = fromList [((x, y), 0) | x <- [0..fst d-1], y <- [0..snd d-1]]
@@ -91,6 +93,7 @@ aiInit d con o =
     f x | otherwise = x
     c = zip (nub l) [0..]
     featureMapping = map fromJust $ map ((flip lookup) c) l
+    m = maximumEx featureMapping
 
 getDist x y = (fst x - fst y) ^ 2 + (snd x - snd y) ^ 2
 
@@ -101,37 +104,49 @@ updateAvailable old pos = dropWhile ((<0) . snd) $
                         then (l, -1)
                         else (l, d + getDist pos l)
 
+evalBoard :: (IntSet -> IntSet -> Int -> Vector Int) -> IntSet
+                -> Dimension -> Seq Pos -> (Pos, Int)
+evalBoard getFeature me d positions = (h, pos2Int d h) where
+    h = fromJust $ positions `index` 0
+
 aiMove :: StateT AiState IO Pos
 aiMove = do
-    a <- gets available
-    m <- gets me
-    d <- gets dimension
-    let len = length a
-    idx <- liftIO $ (randomRIO (0, len - 1) :: IO Int)
-    ai@(l, _)  <- return $ fromJust $ a `index` idx
-    pos <- return l :: StateT AiState IO Pos
-    pInt <- return $ pos2Int d pos
+    a     <- gets available
+    f     <- gets foe
+    m     <- gets me
+    d     <- gets dimension
+    con   <- gets conn
+    fMap  <- gets featMap
+    scans <- gets scan
+    let gf m f p = getFeatures fMap p scans m f con
+        gfeat m m' p = zipWith (-) (gf m' f p) (gf m f p) ++
+                       zipWith (-) (gf f m' p) (gf f m p)
+    (pos, pInt) <- return $ evalBoard gfeat m d $ map fst a
     available' <- return $ updateAvailable a pos
     modify' (\s -> s { available = available', me = insertSet pInt m })
     return pos
 
 peerMove :: Pos -> StateT AiState IO ()
 peerMove pos = do
-    a <- gets available
-    f <- gets foe 
-    m <- gets me
-    d <- gets dimension
-    con <- gets conn
-    fMap <- gets featMap
-    p <- return $ pos2Int d pos
+    a     <- gets available
+    f     <- gets foe
+    m     <- gets me
+    d     <- gets dimension
+    con   <- gets conn
+    fMap  <- gets featMap
+    fe    <- gets feat
+    p     <- return $ pos2Int d pos
     scans <- gets scan
-    f'<- return $ insertSet p f
+    f'    <- return $ insertSet p f
     available' <- return $ updateAvailable a pos
-    modify' (\s -> s { available = available', foe = f' })
+    let gf m f = getFeatures fMap p scans f m con
     delta <- return $
-        zipWith (-) (getFeatures fMap p scans f' m con)
-                    (getFeatures fMap p scans f m con)
-    print delta
+        (zipWith (-) (gf m f') (gf m f)) ++
+        (zipWith (-) (gf f' m) (gf f m))
+    modify' (\s -> s { available = available', foe = f',
+             feat = zipWith (+) delta fe })
+    fe' <- gets feat
+    print fe'
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
