@@ -1,3 +1,4 @@
+--------------------------------------------------------------------------------
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedLists #-}
 
@@ -6,12 +7,13 @@ module Ai ( Pos, Dimension, aiInit, aiMove, peerMove, gameFinish, AiState,
 
 import Prelude()
 import ClassyPrelude
-import Data.List ((!!), iterate)
-import Data.Vector ((!), modify)
+import Data.List ((!!), iterate, nub)
+import Data.Vector ((!), modify, replicate)
 import Data.Vector.Mutable (write)
 import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
-import Data.Bits(shiftL, shiftR)
+import Data.Bits
+import Data.Maybe (fromJust)
 import Debug.Trace
 
 type Pos = (Int, Int)
@@ -26,6 +28,7 @@ data AiState = AiState
     ,   foe       :: IntSet
     ,   available :: Set Pos
     ,   scan      :: [Scan]
+    ,   featMap   :: (Vector Int, Int)
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -63,7 +66,9 @@ generateScanList d = [hScan, vScan, diagRScan, diagLScan] where
 
 -- board-dimension open-move?
 aiInit :: Dimension -> Int -> Bool -> IO AiState
-aiInit d con o = return $ AiState
+aiInit d con o = do
+    print featureMapping
+    return $ AiState
         {
             dimension = d
         ,   conn      = con
@@ -72,9 +77,20 @@ aiInit d con o = return $ AiState
         ,   foe       = mempty
         ,   available = a
         ,   scan      = generateScanList d
+        ,   featMap   = (fromList featureMapping, maximumEx featureMapping + 1)
         }
     where
     a = setFromList [(x, y) | x <- [0..fst d-1], y <- [0..snd d-1]]
+    l' = [0..(2^con - 1)] :: [Int]
+    reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. con - 1] :: [Int])
+    reverseBit' b (a,v) = (a `shiftR` 1, (bset `shiftL` b) .|. v)
+        where bset = 1 .&. a
+    l = map f l'
+    f x | popCount x < 2 = 0
+    f x | reverseBit x < x = reverseBit x
+    f x | otherwise = x
+    c = zip (nub l) [0..]
+    featureMapping = map fromJust $ map ((flip lookup) c) l
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
@@ -96,19 +112,31 @@ peerMove pos = do
     m <- gets me
     d <- gets dimension
     con <- gets conn
+    fMap <- gets featMap
     p <- return $ pos2Int d pos
     scans <- gets scan
     f'<- return $ insertSet p f
     modify' (\s -> s { available = deleteSet pos a, foe = f' })
-    zipWith (-) (getFeatures p scans f' m con) (getFeatures p scans f m con)
+    putStrLn $ tshow $ getFeatures fMap p scans f m con
+    delta <- return $
+        zipWith (-) (getFeatures fMap p scans f' m con)
+                    (getFeatures fMap p scans f m con)
+    print delta
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
 
 -- return deltas of feature set
-getFeatures :: Int -> [Scan] -> IntSet -> IntSet -> Int -> Vector Int
-getFeatures pos scans me foe conn = getFeatures' pos scans me foe
-                                (fromList $ take (2^conn) $ repeat 0) conn
+getFeatures :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
+                                    Int -> Vector Int
+getFeatures featMap pos scans me foe conn =
+    drop 1 $ mergeFeat featMap $ getFeatures' pos scans me foe
+        (fromList $ take (2^conn) $ repeat 0) conn
+
+mergeFeat :: (Vector Int, Int) -> Vector Int -> Vector Int
+mergeFeat (mp,mx) v = foldl' f (Data.Vector.replicate mx 0) (zip mp v) where
+    f acc (idx, v) = Data.Vector.modify
+                        (\v' -> write v' idx (v + (acc!idx))) acc
 
 getFeatures' pos scans me foe feat conn = foldl' (getFeature pos me foe conn)
                                             feat scans
