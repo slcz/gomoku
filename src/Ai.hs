@@ -107,7 +107,7 @@ updateAvailable old pos = dropWhile ((<0) . snd) $
 evalBoard :: (IntSet -> IntSet -> Int -> Vector Int) -> IntSet
                 -> Dimension -> Seq Pos -> (Pos, Int)
 evalBoard getFeature me d positions = (h, pos2Int d h) where
-    h = fromJust $ positions `index` 0
+    h = take 1 positions
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
