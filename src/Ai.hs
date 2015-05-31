@@ -14,6 +14,7 @@ import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
 import Data.Bits
 import Data.Maybe (fromJust)
+import Data.Sequence (sort, replicate, update, unstableSortBy, findIndexL)
 import Debug.Trace
 
 type Pos = (Int, Int)
@@ -26,7 +27,7 @@ data AiState = AiState
     ,   open      :: Bool
     ,   me        :: IntSet
     ,   foe       :: IntSet
-    ,   available :: Set Pos
+    ,   available :: Seq (Pos, Int)
     ,   scan      :: [Scan]
     ,   featMap   :: (Vector Int, Int)
     }
@@ -80,7 +81,7 @@ aiInit d con o = do
         ,   featMap   = (fromList featureMapping, maximumEx featureMapping + 1)
         }
     where
-    a = setFromList [(x, y) | x <- [0..fst d-1], y <- [0..snd d-1]]
+    a  = fromList [((x, y), 0) | x <- [0..fst d-1], y <- [0..snd d-1]]
     l' = [0..(2^con - 1)] :: [Int]
     reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. con - 1] :: [Int])
     reverseBit' b (a,v) = (a `shiftR` 1, (bset `shiftL` b) .|. v)
@@ -97,12 +98,14 @@ aiMove = do
     a <- gets available
     m <- gets me
     d <- gets dimension
-    let l   = toList a
-        len = length l
+    let len = length a
     idx <- liftIO $ (randomRIO (0, len - 1) :: IO Int)
-    pos <- return (l !! idx) :: StateT AiState IO Pos
+    ai@(l, _)  <- return $ fromJust $ a `index` idx
+    pos <- return l :: StateT AiState IO Pos
     pInt <- return $ pos2Int d pos
-    modify' (\s -> s { available = deleteSet pos a, me = insertSet pInt m })
+    available' <- return $ dropWhile ((>=0).snd) $
+        unstableSortBy (\x y -> snd x `compare` snd y) $ update idx (l, -1) a
+    modify' (\s -> s { available = available', me = insertSet pInt m })
     return pos
 
 peerMove :: Pos -> StateT AiState IO ()
@@ -116,7 +119,11 @@ peerMove pos = do
     p <- return $ pos2Int d pos
     scans <- gets scan
     f'<- return $ insertSet p f
-    modify' (\s -> s { available = deleteSet pos a, foe = f' })
+    idx <- return $ fromJust $ Data.Sequence.findIndexL (\x -> fst x == pos) a
+    ai@(l, _) <- return $ fromJust $ a `index` idx
+    available' <- return $ dropWhile ((>=0).snd) $
+        unstableSortBy (\x y -> snd x `compare` snd y) $ update idx (l, -1) a
+    modify' (\s -> s { available = available', foe = f' })
     putStrLn $ tshow $ getFeatures fMap p scans f m con
     delta <- return $
         zipWith (-) (getFeatures fMap p scans f' m con)
