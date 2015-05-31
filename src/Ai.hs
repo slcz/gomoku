@@ -67,8 +67,7 @@ generateScanList d = [hScan, vScan, diagRScan, diagLScan] where
 
 -- board-dimension open-move?
 aiInit :: Dimension -> Int -> Bool -> IO AiState
-aiInit d con o = do
-    print featureMapping
+aiInit d con o =
     return $ AiState
         {
             dimension = d
@@ -93,6 +92,15 @@ aiInit d con o = do
     c = zip (nub l) [0..]
     featureMapping = map fromJust $ map ((flip lookup) c) l
 
+getDist x y = (fst x - fst y) ^ 2 + (snd x - snd y) ^ 2
+
+updateAvailable old pos = dropWhile ((<0) . snd) $
+    unstableSortBy (\x y -> snd x `compare` snd y) updatedDistance where
+    updatedDistance = map calcDist old
+    calcDist (l, d) = if l == pos
+                        then (l, -1)
+                        else (l, d + getDist pos l)
+
 aiMove :: StateT AiState IO Pos
 aiMove = do
     a <- gets available
@@ -103,8 +111,7 @@ aiMove = do
     ai@(l, _)  <- return $ fromJust $ a `index` idx
     pos <- return l :: StateT AiState IO Pos
     pInt <- return $ pos2Int d pos
-    available' <- return $ dropWhile ((>=0).snd) $
-        unstableSortBy (\x y -> snd x `compare` snd y) $ update idx (l, -1) a
+    available' <- return $ updateAvailable a pos
     modify' (\s -> s { available = available', me = insertSet pInt m })
     return pos
 
@@ -119,12 +126,8 @@ peerMove pos = do
     p <- return $ pos2Int d pos
     scans <- gets scan
     f'<- return $ insertSet p f
-    idx <- return $ fromJust $ Data.Sequence.findIndexL (\x -> fst x == pos) a
-    ai@(l, _) <- return $ fromJust $ a `index` idx
-    available' <- return $ dropWhile ((>=0).snd) $
-        unstableSortBy (\x y -> snd x `compare` snd y) $ update idx (l, -1) a
+    available' <- return $ updateAvailable a pos
     modify' (\s -> s { available = available', foe = f' })
-    putStrLn $ tshow $ getFeatures fMap p scans f m con
     delta <- return $
         zipWith (-) (getFeatures fMap p scans f' m con)
                     (getFeatures fMap p scans f m con)
