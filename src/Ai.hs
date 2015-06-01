@@ -14,7 +14,8 @@ import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
 import Data.Bits
 import Data.Maybe (fromJust)
-import Data.Sequence (sort, replicate, update, unstableSortBy, findIndexL)
+import Data.Sequence (replicate, update, unstableSortBy, findIndexL,
+    ViewL(..), viewl, ViewR(..), viewr, (<|))
 import Debug.Trace
 
 type Pos = (Int, Int)
@@ -31,6 +32,7 @@ data AiState = AiState
     ,   scan      :: [Scan]
     ,   featMap   :: (Vector Int, Int)
     ,   feat      :: Vector Int
+    ,   theta     :: Vector Float
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -80,6 +82,11 @@ aiInit d con o =
         ,   scan      = generateScanList d
         ,   featMap   = (fromList featureMapping, m + 1)
         ,   feat      = Data.Vector.replicate (m + m) 0
+        ,   theta     = fromList $
+            [0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
+             0.15, 0.1,   0.62,  0.61, 1,
+             -0.024, -0.018, -0.03, -0.12, -0.012, -0.022, -0.12, -0.12, -0.36,
+             -0.96, -0.006, -0.18, -0.12, -0.74, -0.71, -1.2]
         }
     where
     a  = fromList [((x, y), 0) | x <- [0..fst d-1], y <- [0..snd d-1]]
@@ -104,10 +111,32 @@ updateAvailable old pos = dropWhile ((<0) . snd) $
                         then (l, -1)
                         else (l, d + getDist pos l)
 
-evalBoard :: (IntSet -> IntSet -> Int -> Vector Int) -> IntSet
+evalPos :: Vector Int -> Vector Float -> Float
+evalPos v theta = sum $ zipWith (\x y -> fromIntegral x * y) v theta
+
+evalBoard :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
                 -> Dimension -> Seq Pos -> (Pos, Int)
-evalBoard getFeature me d positions = (h, pos2Int d h) where
-    h = take 1 positions
+evalBoard getFeature theta me d positions = h where
+    e  = evalBoard' getFeature theta me d positions
+    e' = map snd $ unstableSortBy (\x y -> fst x `compare` fst y) e
+    (_ :> h) = viewr e'
+
+evalBoard' :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
+                -> Dimension -> Seq Pos -> Seq (Float, (Pos, Int))
+evalBoard' getFeature theta me d positions | viewl positions == EmptyL = mempty
+evalBoard' getFeature theta me d positions | otherwise =
+    (score, (h, pos2Int d h)) <| restSeq where
+    (h :< rest) = viewl positions
+    (score, delta) = evalBoardOne getFeature theta me d h
+    restSeq = evalBoard' getFeature theta me d rest
+
+evalBoardOne :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float ->
+                IntSet -> Dimension -> Pos -> (Float, Bool)
+evalBoardOne getFeature theta me d pos = (evalPos feature theta, delta) where
+    i        = pos2Int d pos
+    me'      = insertSet i me
+    feature  = getFeature me me' i
+    delta    = any (not . (== 0)) feature
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
@@ -118,10 +147,11 @@ aiMove = do
     con   <- gets conn
     fMap  <- gets featMap
     scans <- gets scan
+    the   <- gets theta
     let gf m f p = getFeatures fMap p scans m f con
         gfeat m m' p = zipWith (-) (gf m' f p) (gf m f p) ++
                        zipWith (-) (gf f m' p) (gf f m p)
-    (pos, pInt) <- return $ evalBoard gfeat m d $ map fst a
+    (pos, pInt) <- return $ evalBoard gfeat the m d $ map fst a
     available' <- return $ updateAvailable a pos
     modify' (\s -> s { available = available', me = insertSet pInt m })
     return pos
@@ -146,7 +176,7 @@ peerMove pos = do
     modify' (\s -> s { available = available', foe = f',
              feat = zipWith (+) delta fe })
     fe' <- gets feat
-    print fe'
+    return ()
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r

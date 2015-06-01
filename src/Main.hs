@@ -285,7 +285,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black AI, Player mempty white Human)
+        player  = (Player mempty black AI, Player mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
@@ -293,13 +293,13 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        dimension  = (9, 9)
+        dimension  = (15, 15)
     ,   gridSize   = 50
     ,   background = makeColor 0.86 0.71 0.52 0.50
     ,   stoneSize  = fromRational $ 4 % 5
     ,   markSize   = fromRational $ 1 % 6
     ,   pollInterval = 200
-    ,   winCondition = 3 -- Win condition: 5 stones connected
+    ,   winCondition = 5 -- Win condition: 5 stones connected
     ,   margin     = 20
     ,   textScale  = 0.2
     ,   delay      = 0
