@@ -285,7 +285,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black AI, Player mempty white AI)
+        player  = (Player mempty black Human, Player mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)

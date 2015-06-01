@@ -115,10 +115,12 @@ evalPos :: Vector Int -> Vector Float -> Float
 evalPos v theta = sum $ zipWith (\x y -> fromIntegral x * y) v theta
 
 evalBoard :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
-                -> Dimension -> Seq Pos -> (Pos, Int)
-evalBoard getFeature theta me d positions = h where
+                -> Dimension -> Seq Pos -> Seq (Pos, Int)
+evalBoard getFeature theta me d positions = map snd $ candidates where
     e  = evalBoard' getFeature theta me d positions
-    e' = map snd $ unstableSortBy (\x y -> fst x `compare` fst y) e
+    e' = unstableSortBy (\x y -> fst x `compare` fst y) e
+    maxScore = fst h
+    candidates = filter (\h -> fst h == maxScore) e'
     (_ :> h) = viewr e'
 
 evalBoard' :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
@@ -151,7 +153,9 @@ aiMove = do
     let gf m f p = getFeatures fMap p scans m f con
         gfeat m m' p = zipWith (-) (gf m' f p) (gf m f p) ++
                        zipWith (-) (gf f m' p) (gf f m p)
-    (pos, pInt) <- return $ evalBoard gfeat the m d $ map fst a
+    lst <- return $ evalBoard gfeat the m d $ map fst a
+    idx <- liftIO $ randomRIO (0, length lst - 1)
+    (pos, pInt) <- return $ fromJust $ index lst idx
     available' <- return $ updateAvailable a pos
     modify' (\s -> s { available = available', me = insertSet pInt m })
     return pos
