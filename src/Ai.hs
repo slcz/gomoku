@@ -132,7 +132,9 @@ peerMove pos = do
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
 
--- return delta of feature set
+--
+-- return input delta after move.
+--
 getDelta :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
             Int -> Vector Int
 getDelta (mapping, size) pos scans black white win =
@@ -162,7 +164,7 @@ getInputs pos scans black white values win = foldl' getInput values scans
     check (values, (acc, depth)) | otherwise = (values, (acc, depth))
 
 --
--- Value Function of the board
+-- Value Function of the board.
 --
 evaluate :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
