@@ -135,15 +135,13 @@ gameFinish r = liftIO $ putStrLn $ tshow r
 -- return delta of feature set
 getDelta :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
             Int -> Vector Int
-getDelta featuremap pos scans black white win =
-    drop 1 $ mergeFeat featuremap $ getInputs pos scans black white
+getDelta (mapping, size) pos scans black white win =
+    drop 1 $ compress $ getInputs pos scans black white
         initialValues win where
-    initialValues = fromList $ replicate (2^win) 0
-
-mergeFeat :: (Vector Int, Int) -> Vector Int -> Vector Int
-mergeFeat (mp,mx) v = foldl' f (replicate mx 0) (zip mp v) where
-    f acc (idx, v) = Data.Vector.modify
-                        (\v' -> write v' idx (v + (acc!idx))) acc
+    initialValues = fromList $ replicate (2 ^ win) 0
+    compress v = foldl' f (replicate size 0) (zip mapping v) where
+        f values (i, v) = Data.Vector.modify
+            (\v' -> write v' i (v + (values ! i))) values
 
 getInputs::Int -> [Scan] -> IntSet -> IntSet -> Vector Int -> Int -> Vector Int
 getInputs pos scans black white values win = foldl' getInput values scans
