@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module Ai ( Pos, Dimension, aiInit, aiMove, peerMove, gameFinish, AiState,
+module Ai ( Pos, Dimension, aiInit, aiMove, stateChange, gameFinish, AiState,
             GameResult (..)) where
 
 import Prelude()
@@ -116,8 +116,8 @@ aiMove = do
     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
     return $ fst $ fromJust $ index bestMoves randCandidate
 
-peerMove :: Pos -> StateT AiState IO ()
-peerMove pos = do
+stateChange :: Pos -> StateT AiState IO ()
+stateChange pos = do
     AiState dimension win (black, white) slot scans featuremap _ parameters
             <- get
     pInt   <- return $ pos2Int dimension pos

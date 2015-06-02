@@ -227,7 +227,7 @@ runAI state channels = do
             (p, state') <- runStateT aiMove state
             atomically $ writeTChan chTx $ Move p
             runAI state' channels
-        Move pos -> do  state' <- execStateT (peerMove pos) state
+        Move pos -> do  state' <- execStateT (stateChange pos) state
                         runAI state' channels
         m -> do
             let r = case m of
@@ -279,7 +279,7 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        dimension  = (11, 11)
+        dimension  = (15, 15)
     ,   gridSize   = 50
     ,   background = makeColor 0.86 0.71 0.52 0.50
     ,   stoneSize  = fromRational $ 4 % 5
