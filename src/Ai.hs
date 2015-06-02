@@ -90,67 +90,70 @@ aiInit boardGeom winningStones =
     where
     emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
                                        y <- [0 .. snd boardGeom - 1]]
-    l' = [0..(2^winningStones - 1)] :: [Int]
     reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. winningStones - 1] :: [Int])
     reverseBit' b (a,v) = (a `shiftR` 1, (bset `shiftL` b) .|. v)
         where bset = 1 .&. a
-    l = map f l'
-    f x | popCount x < 2 = 0
-    f x | reverseBit x < x = reverseBit x
-    f x | otherwise = x
-    c = zip (nub l) [0..]
-    featureMapping = map fromJust $ map ((flip lookup) c) l
+    allPatterns = [0..(2^winningStones - 1)] :: [Int]
+    mappings = map filterFeatures allPatterns
+    -- A feature is at least two stones in 5 slots,
+    -- and merge mirror patterns.
+    filterFeatures x | popCount   x < 2 = 0
+    filterFeatures x | reverseBit x < x = reverseBit x
+    filterFeatures x | otherwise        = x
+    compressed = zip (nub mappings) [0..]
+    featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
-evalPos :: Vector Int -> Vector Float -> Float
-evalPos v theta = sum $ zipWith (\x y -> fromIntegral x * y) v theta
+value :: Vector Int -> Vector Float -> Float
+value input theta = sum $ zipWith (\x y -> fromIntegral x * y) input theta
 
-evalBoard :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
+evaluate :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
-evalBoard getFeature theta me d positions = map snd $ candidates where
-    e    = evalBoard' getFeature theta me d (toList positions)
+evaluate extract theta black dim positions = map snd $ candidates where
+    e    = eval extract theta black dim (toList positions)
     emax = fst $ maximumByEx (\x y -> fst x `compare` fst y) e
     candidates = filter (\h -> fst h == emax) e
 
-evalBoard' :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
+eval :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
                 -> Dimension -> [Pos] -> Vector (Float, (Pos, Int))
-evalBoard' getFeature theta me d []     = mempty
-evalBoard' getFeature theta me d (x:xs) =
-    (score, (x, pos2Int d x)) `cons` rest where
-    (score, delta) = evalBoardOne getFeature theta me d x
-    rest = evalBoard' getFeature theta me d xs
+eval _ _ _ _ [] = mempty
+eval extract theta black dim (x:xs) =
+    (score, (x, pos2Int dim x)) `cons` rest where
+    (score, delta) = evalOne extract theta black dim x
+    rest = eval extract theta black dim xs
 
-evalBoardOne :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float ->
+evalOne :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float ->
                 IntSet -> Dimension -> Pos -> (Float, Bool)
-evalBoardOne getFeature theta me d pos = (evalPos feature theta, delta) where
-    i        = pos2Int d pos
-    me'      = insertSet i me
-    feature  = getFeature me me' i
+evalOne extract theta black dim pos = (value feature theta, delta) where
+    i        = pos2Int dim pos
+    black'   = insertSet i black
+    feature  = extract black black' i
     delta    = any (not . (== 0)) feature
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
-    AiState d con (m,f) a scans fMap _ the <- get
-    let gf m f p = getFeatures fMap p scans m f con
-        gfeat m m' p = zipWith (-) (gf m' f p) (gf m f p) ++
-                       zipWith (-) (gf f m' p) (gf f m p)
-    lst <- return $ evalBoard gfeat the m d a
-    idx <- liftIO $ randomRIO (0, length lst - 1)
-    (pos, pInt) <- return $ fromJust $ index lst idx
-    return pos
+    AiState dimension win (black, white) slot scans featuremap _ parameters
+            <- get
+    let g black white pos = getFeatures featuremap pos scans black white win
+        extFeatures black black' pos =
+            zipWith (-) (g black' white pos) (g black white pos) ++
+            zipWith (-) (g white black' pos) (g white black pos)
+    bestMoves <- return $ evaluate extFeatures parameters black dimension slot
+    randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
+    return $ fst $ fromJust $ index bestMoves randCandidate
 
 peerMove :: Pos -> StateT AiState IO ()
 peerMove pos = do
-    AiState d con (m,f) a scans fMap fe the <- get
-    p     <- return $ pos2Int d pos
-    m'    <- return $ insertSet p m
-    let gf m f = getFeatures fMap p scans m f con
+    AiState dimension win (black, white) slot scans featuremap _ parameters
+            <- get
+    pInt   <- return $ pos2Int dimension pos
+    black' <- return $ insertSet pInt black
+    let g black white = getFeatures featuremap pInt scans black white win
     delta <- return $
-        (zipWith (-) (gf m' f) (gf m f)) ++
-        (zipWith (-) (gf f m') (gf f m))
-    modify' (\s -> s {  emptySlot = deleteSet pos a
-                     ,  players   = (f, m') })
-    return ()
+        (zipWith (-) (g black' white ) (g black white)) ++
+        (zipWith (-) (g white  black') (g white black))
+    modify' (\s -> s {  emptySlot = deleteSet pos slot
+                     ,  players   = (white, black') })
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
