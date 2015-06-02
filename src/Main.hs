@@ -33,18 +33,20 @@ data Message = Move Pos | Bug | Result GameResult | Start deriving (Eq, Show)
 
 data Player = Player
     {
-        stoneSet   :: Set Pos
-    ,   stoneColor :: Color
+        stoneSet    :: Set Pos
+    ,   stoneColor  :: Color
     ,   playMode    :: PlayMode
     } deriving (Show)
 
 data Board = Board
     {
-        player    :: (Player, Player)
+        player      :: (Player, Player)
     ,   totalMoves  :: Int
     ,   win         :: Set Pos
-    ,   ch          :: (Maybe ([TChan Message]), Maybe ([TChan Message]))
+    ,   ch          :: (Maybe (TChan Message), Maybe (TChan Message))
     }
+
+(sender, receiver) = (fst, snd)
 
 data Config = Config
     {
@@ -162,8 +164,8 @@ nextState board pos = do
                 player = swap ((fst $ player board)
                                     { stoneSet = update },
                                  (snd $ player board)),
-                win  = checkWinCondition update dimBoard pos,
-                ch   = swap $ ch board }, True)
+                win  = checkWinCondition update dimBoard pos},
+                True)
         else return (board, False)
 
 -- Capture left mouse button release event.
@@ -177,19 +179,22 @@ input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
         -- pos@(x, y) is normalized position of the move.
         pos@(x, y) = (snap (mousex - shiftx), snap (mousey - shifty))
     (newBoard, legal) <- nextState board pos
-    when legal $ do
-        let msgch = snd $ ch board
-        when (isJust msgch) $
-            atomically $ writeTChan (headEx $ fromJust msgch) $ Move pos
+    let r = fromJust $ sender $ ch board
+    when legal $ sendmsg r (Move pos) newBoard
     return newBoard
 input _ board = return board
+
+sendmsg rec msg board = do
+    atomically $ writeTChan rec $ msg
+    when ((playMode $ fst $ player board) == AI) $ do
+        atomically $ writeTChan rec $ Start
 
 nextAIMove pos board = fst <$> nextState board pos
 
 step :: Float -> Board -> IO Board
 step _ board | (playMode . fst . player $ board) == Human = return board
 step _ board = do
-    let [chTx, chRx] = fromJust . fst . ch $ board
+    let (chTx, chRx) = mapTuple fromJust $ ch board
     maybeMsg <- atomically $ tryReadTChan chRx
     if not $ isJust maybeMsg
         then return board
@@ -197,43 +202,33 @@ step _ board = do
 
 stepUnblocked :: Board -> Message -> IO Board
 stepUnblocked board msg =
-    let
-        [chTx, chRx] = fromJust . fst . ch $ board
+    let (chTx, chRx) = mapTuple fromJust $ ch board
     in if isTie board || isWin board
-        then
-            do  (p', p'') <- return $ getGameEndMsg board
-                atomically $ writeTChan chTx p'
-                peer <- return $ snd $ ch board
-                when (isJust peer) $
-                    atomically $ writeTChan (headEx $ fromJust peer) p'' 
-                return board
+        then return board
         else
             (threadDelay $ delay gameConfig) >>
             case msg of
             Move pos ->
                 do  newBoard <- nextAIMove pos board
-                    peer <- return $ fst $ ch newBoard
-                    when (isWin newBoard || isTie newBoard) $
-                        atomically $
-                            writeTChan chTx (snd $ getGameEndMsg newBoard)
-                    when (isJust peer) $
-                        atomically $ writeTChan
-                        (headEx . fromJust $ peer) msg
+                    if isWin newBoard || isTie newBoard
+                        then atomically $
+                                writeTChan chTx (snd $ getGameEndMsg newBoard)
+                        else sendmsg chTx msg newBoard
                     return newBoard
             _       -> return board
 
-runAI :: AiState -> [TChan Message] -> IO AiState
+runAI :: AiState -> (TChan Message, TChan Message) -> IO AiState
 runAI state channels = do
-    let [chRx, chTx] = channels
-        doMove ch state = do
-            (p, state') <- runStateT aiMove state
-            atomically $ writeTChan chTx $ Move p
-            runAI state' ch
+    let -- Flip sender and receiver at AI agent
+        (chTx, chRx) = (receiver channels, sender channels)
     msg <- atomically $ readTChan chRx
     case msg of
-        Start    -> doMove channels state
+        Start -> do
+            (p, state') <- runStateT aiMove state
+            atomically $ writeTChan chTx $ Move p
+            runAI state' channels
         Move pos -> do  state' <- execStateT (peerMove pos) state
-                        doMove channels state'
+                        runAI state' channels
         m -> do
             let r = case m of
                         Result r' -> r'
@@ -243,37 +238,28 @@ runAI state channels = do
             atomically $ writeTChan chTx m
             return state'
 
-startAI :: Bool -> [TChan Message] -> IO ()
-startAI open channels = do
-    state <- aiInit (dimension gameConfig) (winCondition gameConfig) open
+startAI :: (TChan Message, TChan Message) -> IO ()
+startAI channels = do
+    state <- aiInit (dimension gameConfig) (winCondition gameConfig)
     runAI state channels
     return ()
-
-newTChanIOpair :: IO [TChan a]
-newTChanIOpair = newTChanIO >>= \a -> newTChanIO >>= \b -> return [a, b]
-
-makeChTbl :: [(PlayMode, IO (Maybe [TChan a]))]
-makeChTbl = [(Human, return Nothing), (AI, Just <$> newTChanIOpair)]
 
 main :: IO ()
 main = do
     let playmode = mapTuple playMode . player $ initialBoard
-        ch =  mapTuple (fromJust . flip lookup makeChTbl) playmode
+        ch = (newTChanIO, newTChanIO)
 
     -- create channels for AIs
     channels <- (uncurry $ liftM2 (,)) ch
 
-    -- fork tasks for AIs
-    let startIO :: Bool -> Maybe [TChan Message] -> IO ()
-        startIO open maybech =
-            case maybech of
-                Nothing-> return ()
-                Just c -> forkIO (startAI open c) >> return ()
-    (startIO True $ fst channels) >> (startIO False $ snd channels)
-    board <- return $ initialBoard {ch = channels }
+    -- fork task for AI agent
+    _ <- forkIO (startAI channels)
+
+    board <- return $ initialBoard {ch = mapTuple Just channels }
 
     -- Sending message to jumpstart the first AI
-    atomically $ mapM_ (\x -> writeTChan (headEx x) Start) $ fst channels
+    when (fst playmode == AI) $
+        atomically $ (flip writeTChan) Start $ sender channels
     
     let scaling = (* gridSize gameConfig)
     playIO (InWindow "GOMOKU" (1, 1) $
@@ -285,7 +271,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black Human, Player mempty white AI)
+        player  = (Player mempty black Human, Player mempty white Human)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
@@ -293,7 +279,7 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        dimension  = (15, 15)
+        dimension  = (9, 9)
     ,   gridSize   = 50
     ,   background = makeColor 0.86 0.71 0.52 0.50
     ,   stoneSize  = fromRational $ 4 % 5
@@ -304,4 +290,3 @@ gameConfig = Config
     ,   textScale  = 0.2
     ,   delay      = 0
     }
-

@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 --------------------------------------------------------------------------------
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedLists #-}
@@ -25,9 +26,8 @@ data AiState = AiState
     {
         dimension :: Dimension
     ,   conn      :: Int
-    ,   open      :: Bool
-    ,   me        :: IntSet
-    ,   foe       :: IntSet
+    ,   turn      :: Bool
+    ,   players   :: (IntSet, IntSet)
     ,   available :: Seq (Pos, Int)
     ,   scan      :: [Scan]
     ,   featMap   :: (Vector Int, Int)
@@ -68,16 +68,15 @@ generateScanList d = [hScan, vScan, diagRScan, diagLScan] where
     diagLScan = gen (takehead id ++ drophead id) (+w') (w-1)
                 (\x -> x `mod` (w - 1) - w')
 
--- board-dimension open-move?
-aiInit :: Dimension -> Int -> Bool -> IO AiState
-aiInit d con o =
+-- board-dimension
+aiInit :: Dimension -> Int -> IO AiState
+aiInit d con =
     return $ AiState
         {
             dimension = d
         ,   conn      = con
-        ,   open      = o
-        ,   me        = mempty
-        ,   foe       = mempty
+        ,   turn      = True
+        ,   players   = (mempty, mempty)
         ,   available = a
         ,   scan      = generateScanList d
         ,   featMap   = (fromList featureMapping, m + 1)
@@ -143,8 +142,9 @@ evalBoardOne getFeature theta me d pos = (evalPos feature theta, delta) where
 aiMove :: StateT AiState IO Pos
 aiMove = do
     a     <- gets available
-    f     <- gets foe
-    m     <- gets me
+    move  <- gets turn
+    ps    <- gets players
+    (m,f) <- return $ if move then ps else swap ps
     d     <- gets dimension
     con   <- gets conn
     fMap  <- gets featMap
@@ -156,30 +156,30 @@ aiMove = do
     lst <- return $ evalBoard gfeat the m d $ map fst a
     idx <- liftIO $ randomRIO (0, length lst - 1)
     (pos, pInt) <- return $ fromJust $ index lst idx
-    available' <- return $ updateAvailable a pos
-    modify' (\s -> s { available = available', me = insertSet pInt m })
     return pos
 
 peerMove :: Pos -> StateT AiState IO ()
 peerMove pos = do
     a     <- gets available
-    f     <- gets foe
-    m     <- gets me
+    move  <- gets turn
+    select <- return $ if move then id else swap
+    ps    <- gets players
+    (m,f) <- return $ select ps
     d     <- gets dimension
     con   <- gets conn
     fMap  <- gets featMap
     fe    <- gets feat
     p     <- return $ pos2Int d pos
     scans <- gets scan
-    f'    <- return $ insertSet p f
+    m'    <- return $ insertSet p f
     available' <- return $ updateAvailable a pos
-    let gf m f = getFeatures fMap p scans f m con
+    let gf m f = getFeatures fMap p scans m f con
     delta <- return $
-        (zipWith (-) (gf m f') (gf m f)) ++
-        (zipWith (-) (gf f' m) (gf f m))
-    modify' (\s -> s { available = available', foe = f',
-             feat = zipWith (+) delta fe })
-    fe' <- gets feat
+        (zipWith (-) (gf m' f) (gf m f)) ++
+        (zipWith (-) (gf f m') (gf f m))
+    modify' (\s -> s {  available = available'
+                     ,  players   = select (insertSet p m, f)
+                     ,  turn      = not move })
     return ()
 
 gameFinish :: GameResult -> StateT AiState IO ()
