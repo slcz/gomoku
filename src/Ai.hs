@@ -1,7 +1,10 @@
-{-# LANGUAGE FlexibleContexts #-}
+--------------------------------------------------------------------------------
+-- Temporal difference based learning algorithm.
+--------------------------------------------------------------------------------
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE OverloadedLists   #-}
+{-# LANGUAGE TypeFamilies      #-}
 
 module Ai ( Pos, Dimension, aiInit, aiMove, stateChange, gameFinish, AiState,
             GameResult (..)) where
@@ -18,6 +21,7 @@ import Data.Maybe (fromJust)
 import Debug.Trace
 import System.IO (openFile, hClose, IOMode(..))
 import Text.Read(read)
+import System.Random(randomIO)
 
 type Pos       = (Int, Int)
 type Dimension = (Int, Int)
@@ -77,6 +81,9 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
 -- board-dimension
 aiInit :: Dimension -> Int -> FilePath -> FilePath -> IO AiState
 aiInit boardGeom winningStones thetaFile trainingFile = do
+    let thetaLength = m + m + 2
+    putStrLn $ tshow featureMapping
+    randTheta <- replicateM thetaLength randomIO :: IO [Float]
     t' <- handle ((\_ -> return randTheta) :: IOException -> IO [Float]) $
             bracket (openFile thetaFile ReadMode)
             hClose
@@ -102,17 +109,15 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
         ,   training   = h
         }
     where
-    randTheta = replicate (m + m + 2) 0.0 :: [Float]
     emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
                                        y <- [0 .. snd boardGeom - 1]]
-    reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. winningStones - 1] :: [Int])
+    reverseBit i = snd $ foldr reverseBit' (i,0)
+                    ([0 .. winningStones - 1] :: [Int])
     reverseBit' b (a,v) = (a `shiftR` 1, (bset `shiftL` b) .|. v)
         where bset = 1 .&. a
     allPatterns = [0..(2^winningStones - 1)] :: [Int]
     mappings = map filterFeatures allPatterns
-    -- A feature is at least two stones in 5 slots,
-    -- and merge mirror patterns.
-    filterFeatures x | popCount   x < 2 = 0
+    filterFeatures x | popCount   x < 1 = 0
     filterFeatures x | reverseBit x < x = reverseBit x
     filterFeatures x | otherwise        = x
     compressed = zip (nub mappings) [0..]
