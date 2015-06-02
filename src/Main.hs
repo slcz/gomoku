@@ -271,7 +271,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black Human, Player mempty white Human)
+        player  = (Player mempty black AI, Player mempty white Human)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
@@ -279,7 +279,7 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        dimension  = (9, 9)
+        dimension  = (11, 11)
     ,   gridSize   = 50
     ,   background = makeColor 0.86 0.71 0.52 0.50
     ,   stoneSize  = fromRational $ 4 % 5
