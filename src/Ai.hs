@@ -107,7 +107,8 @@ aiInit boardGeom winningStones =
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
-extractAllFeatures featuremap scans white win first black black' pos =
+extractAllFeatures featuremap scans white win first input black black' pos =
+    zipWith (+) input $
     firstSet ++
     zipWith (-) (g black' white pos) (g black white pos) ++
     zipWith (-) (g white black' pos) (g white black pos) where
@@ -116,9 +117,9 @@ extractAllFeatures featuremap scans white win first black black' pos =
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
-    AiState dimension win (black, white) slot scans featuremap _ parameters
-            first <- get
-    let ext = extractAllFeatures featuremap scans white win first
+    AiState dimension win (black, white) slot scans featuremap input
+            parameters first <- get
+    let ext = extractAllFeatures featuremap scans white win first input
     bestMoves <- return $ evaluate ext parameters black dimension slot
     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
     return $ fst $ fromJust $ index bestMoves randCandidate
