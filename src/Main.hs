@@ -60,6 +60,8 @@ data Config = Config
     ,   margin       :: Int
     ,   textScale    :: Float
     ,   delay        :: Int
+    ,   thetaFile    :: FilePath
+    ,   trainingFile :: FilePath
     }
 
 -- check x, y is within the board boundary.
@@ -112,7 +114,7 @@ instance Semigroup Picture
 -- side).
 draw :: Board -> IO Picture
 draw board = return $ translate shiftx shifty pic where
-    Config gs (boundaryX, boundaryY) _ ss mark _ _ margin ts _ = gameConfig
+    Config gs (boundaryX, boundaryY) _ ss mark _ _ margin ts _ _ _ = gameConfig
 
     pic = grid <> plays <> wins <> context <> gameInfo
 
@@ -153,7 +155,7 @@ draw board = return $ translate shiftx shifty pic where
 
 nextState :: Board -> Pos -> IO (Board, Bool)
 nextState board pos = do
-    let Config gs' dimBoard _ ss mark _ _ _ _ _ = gameConfig
+    let Config gs' dimBoard _ ss mark _ _ _ _ _ _ _ = gameConfig
         stones   = stoneSet $ fst $ player board
         update = pos `Data.Set.insert` stones
         allstones = uncurry union $ mapTuple stoneSet $ player board
@@ -242,6 +244,7 @@ runAI state channels = do
 startAI :: (TChan Message, TChan Message) -> IO ()
 startAI channels = do
     state <- aiInit (dimension gameConfig) (winCondition gameConfig)
+                    (thetaFile gameConfig) (trainingFile gameConfig)
     runAI state channels
     return ()
 
@@ -272,7 +275,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black Human, Player mempty white Human)
+        player  = (Player mempty black AI, Player mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
@@ -290,4 +293,6 @@ gameConfig = Config
     ,   margin     = 20
     ,   textScale  = 0.2
     ,   delay      = 0
+    ,   thetaFile  = "theta"
+    ,   trainingFile = "gomoku-trainingset"
     }

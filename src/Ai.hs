@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -16,6 +17,7 @@ import Data.Bits
 import Data.Maybe (fromJust)
 import Debug.Trace
 import System.IO (openFile, hClose, IOMode(..))
+import Text.Read(read)
 
 type Pos       = (Int, Int)
 type Dimension = (Int, Int)
@@ -28,7 +30,7 @@ data AiState = AiState
     ,   emptySlot :: Set Pos
     ,   scan      :: [Scan]
     ,   featureMap:: (Vector Int, Int)
-    ,   input     :: Vector Int
+    ,   input     :: (Vector Int, Vector Int)
     ,   theta     :: Vector Float
     ,   firstMove :: Bool
     ,   training  :: Handle
@@ -73,10 +75,19 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
     diagLIdx x = x `mod` (w - 1) - w'
 
 -- board-dimension
-aiInit :: Dimension -> Int -> IO AiState
-aiInit boardGeom winningStones = do
+aiInit :: Dimension -> Int -> FilePath -> FilePath -> IO AiState
+aiInit boardGeom winningStones thetaFile trainingFile = do
+    t' <- handle ((\_ -> return randTheta) :: IOException -> IO [Float]) $
+            bracket (openFile thetaFile ReadMode)
+            hClose
+            $ \handle -> do
+                contents <- hGetContents handle
+                w        <- return $ words contents
+                thetas   <- return $ map read w :: IO [Float]
+                putStrLn $ tshow thetas
+                return thetas
     h <- handle ((\_ -> error "Can't open file") :: IOException -> IO Handle) $
-                openFile "gomoku-trainingset" AppendMode
+                openFile trainingFile AppendMode
     return $ AiState
         {
             dimension  = boardGeom
@@ -85,17 +96,13 @@ aiInit boardGeom winningStones = do
         ,   emptySlot  = emptyBoard
         ,   scan       = generateScanList boardGeom
         ,   featureMap = (fromList featureMapping, m + 1)
-        ,   input      = replicate (2 + m + m) 0
-        ,   theta      = fromList $
-            [0, 0,
-             0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
-             0.15, 0.1,   0.62,  0.61, 1.5,
-             -0.024, -0.018, -0.03, -0.12, -0.012, -0.022, -0.12, -0.12, -0.36,
-             -0.96, -0.006, -0.18, -0.12, -0.74, -0.71, -1.2]
+        ,   input      = (replicate m 0, replicate m 0)
+        ,   theta      = fromList t'
         ,   firstMove  = True
         ,   training   = h
         }
     where
+    randTheta = replicate (m + m + 2) 0.0 :: [Float]
     emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
                                        y <- [0 .. snd boardGeom - 1]]
     reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. winningStones - 1] :: [Int])
@@ -112,18 +119,23 @@ aiInit boardGeom winningStones = do
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
-extractAllFeatures featuremap scans white win first input black black' pos =
-    firstSet ++
-    (zipWith (+) (drop 2 input) $
-     zipWith (-) (g black' white pos) (g black white pos) ++
-     zipWith (-) (g white black' pos) (g white black pos)) where
-    firstSet = if first then [1, 0] else [0, 1]
+extractFeatures featuremap scans white win (b,w) black black' pos =
+    (zipWith (+) b $ zipWith (-) (g black' white pos) (g black white pos),
+     zipWith (+) w $ zipWith (-) (g white black' pos) (g white black pos))
+    where
     g black white pos = getDelta featuremap pos scans black white win
+
+firstSet first = if first then [1, 0] else [0, 1]
+
+extractAllFeatures featuremap scans white win first (b,w) black black' pos =
+    firstSet first ++ bf ++ wf
+    where
+    (bf, wf) = extractFeatures featuremap scans white win (b,w) black black' pos
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
-    AiState dimension win (black, white) slot scans featuremap input
-            parameters first _ <- get
+    AiState dimension win (black, white) slot scans featuremap
+            input parameters first _ <- get
     let ext = extractAllFeatures featuremap scans white win first input
     bestMoves <- return $ evaluate ext parameters black dimension slot
     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
@@ -131,17 +143,18 @@ aiMove = do
 
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
-    AiState dimension win (black, white) slot scans featuremap input parameters
-            first h <- get
+    AiState dimension win (black, white) slot scans featuremap
+            input parameters first h <- get
     pInt   <- return $ pos2Int dimension pos
     black' <- return $ insertSet pInt black
-    newInput <- return $ extractAllFeatures featuremap scans white win
-                         first input black black' pInt
+    (nb, nw) <- return $ extractFeatures featuremap scans white win
+                         input black black' pInt
     modify' (\s -> s {  emptySlot = deleteSet pos slot
                      ,  players   = (white, black')
                      ,  firstMove = not first
-                     ,  input     = newInput })
-    hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") "" newInput
+                     ,  input     = (nw, nb)})
+    hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") ""
+        (firstSet first ++ nb ++ nw)
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = do
