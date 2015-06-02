@@ -15,6 +15,7 @@ import System.Random (randomRIO)
 import Data.Bits
 import Data.Maybe (fromJust)
 import Debug.Trace
+import System.IO (openFile, hClose, IOMode(..))
 
 type Pos       = (Int, Int)
 type Dimension = (Int, Int)
@@ -30,6 +31,7 @@ data AiState = AiState
     ,   input     :: Vector Int
     ,   theta     :: Vector Float
     ,   firstMove :: Bool
+    ,   training  :: Handle
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -72,7 +74,9 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
 
 -- board-dimension
 aiInit :: Dimension -> Int -> IO AiState
-aiInit boardGeom winningStones =
+aiInit boardGeom winningStones = do
+    h <- handle ((\_ -> error "Can't open file") :: IOException -> IO Handle) $
+                openFile "gomoku-trainingset" AppendMode
     return $ AiState
         {
             dimension  = boardGeom
@@ -81,7 +85,7 @@ aiInit boardGeom winningStones =
         ,   emptySlot  = emptyBoard
         ,   scan       = generateScanList boardGeom
         ,   featureMap = (fromList featureMapping, m + 1)
-        ,   input      = replicate (m + m) 0
+        ,   input      = replicate (2 + m + m) 0
         ,   theta      = fromList $
             [0, 0,
              0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
@@ -89,6 +93,7 @@ aiInit boardGeom winningStones =
              -0.024, -0.018, -0.03, -0.12, -0.012, -0.022, -0.12, -0.12, -0.36,
              -0.96, -0.006, -0.18, -0.12, -0.74, -0.71, -1.2]
         ,   firstMove  = True
+        ,   training   = h
         }
     where
     emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
@@ -108,17 +113,17 @@ aiInit boardGeom winningStones =
     m = maximumEx featureMapping
 
 extractAllFeatures featuremap scans white win first input black black' pos =
-    zipWith (+) input $
     firstSet ++
-    zipWith (-) (g black' white pos) (g black white pos) ++
-    zipWith (-) (g white black' pos) (g white black pos) where
+    (zipWith (+) (drop 2 input) $
+     zipWith (-) (g black' white pos) (g black white pos) ++
+     zipWith (-) (g white black' pos) (g white black pos)) where
     firstSet = if first then [1, 0] else [0, 1]
     g black white pos = getDelta featuremap pos scans black white win
 
 aiMove :: StateT AiState IO Pos
 aiMove = do
     AiState dimension win (black, white) slot scans featuremap input
-            parameters first <- get
+            parameters first _ <- get
     let ext = extractAllFeatures featuremap scans white win first input
     bestMoves <- return $ evaluate ext parameters black dimension slot
     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
@@ -127,17 +132,29 @@ aiMove = do
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
     AiState dimension win (black, white) slot scans featuremap input parameters
-            first <- get
+            first h <- get
     pInt   <- return $ pos2Int dimension pos
     black' <- return $ insertSet pInt black
-    delta <- return $ extractAllFeatures featuremap scans white win
-                      first black black' pInt
+    newInput <- return $ extractAllFeatures featuremap scans white win
+                         first input black black' pInt
     modify' (\s -> s {  emptySlot = deleteSet pos slot
                      ,  players   = (white, black')
-                     ,  input     = zipWith (+) input delta })
+                     ,  firstMove = not first
+                     ,  input     = newInput })
+    hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") "" newInput
 
 gameFinish :: GameResult -> StateT AiState IO ()
-gameFinish r = liftIO $ putStrLn $ tshow r
+gameFinish r = do
+    h     <- gets training
+    first <- gets firstMove
+    liftIO $ do
+        putStrLn $ tshow r
+        final <- return $ case r of
+                            GameWin  -> if first then 0 else 1
+                            GameLoss -> if first then 1 else 0
+                            _        -> 0.5
+        hPutStrLn h $ tshow final ++ " " ++ tshow (1 - final)
+        hClose h
 
 --
 -- return input delta after move.

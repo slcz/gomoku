@@ -181,6 +181,8 @@ input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
     (newBoard, legal) <- nextState board pos
     let r = fromJust $ sender $ ch board
     when legal $ sendmsg r (Move pos) newBoard
+    when (isTie newBoard || isWin newBoard) $
+        atomically $ writeTChan r (snd $ getGameEndMsg newBoard)
     return newBoard
 input _ board = return board
 
@@ -210,10 +212,9 @@ stepUnblocked board msg =
             case msg of
             Move pos ->
                 do  newBoard <- nextAIMove pos board
-                    if isWin newBoard || isTie newBoard
-                        then atomically $
-                                writeTChan chTx (snd $ getGameEndMsg newBoard)
-                        else sendmsg chTx msg newBoard
+                    sendmsg chTx msg newBoard
+                    when (isWin newBoard || isTie newBoard) $ atomically $
+                            writeTChan chTx (snd $ getGameEndMsg newBoard)
                     return newBoard
             _       -> return board
 
@@ -222,6 +223,7 @@ runAI state channels = do
     let -- Flip sender and receiver at AI agent
         (chTx, chRx) = (receiver channels, sender channels)
     msg <- atomically $ readTChan chRx
+    putStrLn $ tshow msg
     case msg of
         Start -> do
             (p, state') <- runStateT aiMove state
