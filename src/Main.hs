@@ -223,7 +223,6 @@ runAI state channels = do
     let -- Flip sender and receiver at AI agent
         (chTx, chRx) = (receiver channels, sender channels)
     msg <- atomically $ readTChan chRx
-    putStrLn $ tshow msg
     case msg of
         Start -> do
             (p, state') <- runStateT aiMove state
@@ -273,7 +272,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black Human, Player mempty white AI)
+        player  = (Player mempty black Human, Player mempty white Human)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
