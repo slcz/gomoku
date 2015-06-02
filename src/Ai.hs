@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
---------------------------------------------------------------------------------
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE OverloadedLists #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Ai ( Pos, Dimension, aiInit, aiMove, peerMove, gameFinish, AiState,
             GameResult (..)) where
@@ -17,18 +16,18 @@ import Data.Bits
 import Data.Maybe (fromJust)
 import Debug.Trace
 
-type Pos = (Int, Int)
+type Pos       = (Int, Int)
 type Dimension = (Int, Int)
 
 data AiState = AiState
     {
         dimension :: Dimension
-    ,   conn      :: Int
-    ,   players   :: (IntSet, IntSet)
-    ,   available :: Set Pos
+    ,   winCond   :: Int              -- Number of connected stones
+    ,   players   :: (IntSet, IntSet) -- first of tuple moves
+    ,   emptySlot :: Set Pos
     ,   scan      :: [Scan]
-    ,   featMap   :: (Vector Int, Int)
-    ,   feat      :: Vector Int
+    ,   featureMap:: (Vector Int, Int)
+    ,   input     :: Vector Int
     ,   theta     :: Vector Float
     }
 
@@ -67,16 +66,16 @@ generateScanList d = [hScan, vScan, diagRScan, diagLScan] where
 
 -- board-dimension
 aiInit :: Dimension -> Int -> IO AiState
-aiInit d con =
+aiInit d winningStones =
     return $ AiState
         {
             dimension = d
-        ,   conn      = con
+        ,   winCond   = winningStones
         ,   players   = (mempty, mempty)
-        ,   available = a
+        ,   emptySlot = a
         ,   scan      = generateScanList d
-        ,   featMap   = (fromList featureMapping, m + 1)
-        ,   feat      = Data.Vector.replicate (m + m) 0
+        ,   featureMap= (fromList featureMapping, m + 1)
+        ,   input     = Data.Vector.replicate (m + m) 0
         ,   theta     = fromList $
             [0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
              0.15, 0.1,   0.62,  0.61, 1.5,
@@ -85,8 +84,8 @@ aiInit d con =
         }
     where
     a  = setFromList [(x, y) | x <- [0 .. fst d - 1], y <- [0 .. snd d - 1]]
-    l' = [0..(2^con - 1)] :: [Int]
-    reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. con - 1] :: [Int])
+    l' = [0..(2^winningStones - 1)] :: [Int]
+    reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. winningStones - 1] :: [Int])
     reverseBit' b (a,v) = (a `shiftR` 1, (bset `shiftL` b) .|. v)
         where bset = 1 .&. a
     l = map f l'
@@ -143,7 +142,7 @@ peerMove pos = do
     delta <- return $
         (zipWith (-) (gf m' f) (gf m f)) ++
         (zipWith (-) (gf f m') (gf f m))
-    modify' (\s -> s {  available = deleteSet pos a
+    modify' (\s -> s {  emptySlot = deleteSet pos a
                      ,  players   = (f, m') })
     return ()
 
@@ -153,25 +152,25 @@ gameFinish r = liftIO $ putStrLn $ tshow r
 -- return deltas of feature set
 getFeatures :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
                                     Int -> Vector Int
-getFeatures featMap pos scans me foe conn =
-    drop 1 $ mergeFeat featMap $ getFeatures' pos scans me foe
-        (fromList $ take (2^conn) $ repeat 0) conn
+getFeatures featureMap pos scans me foe win =
+    drop 1 $ mergeFeat featureMap $ getFeatures' pos scans me foe
+        (fromList $ take (2^win) $ repeat 0) win 
 
 mergeFeat :: (Vector Int, Int) -> Vector Int -> Vector Int
 mergeFeat (mp,mx) v = foldl' f (Data.Vector.replicate mx 0) (zip mp v) where
     f acc (idx, v) = Data.Vector.modify
                         (\v' -> write v' idx (v + (acc!idx))) acc
 
-getFeatures' pos scans me foe feat conn = foldl' (getFeature pos me foe conn)
+getFeatures' pos scans me foe feat win = foldl' (getFeature pos me foe win)
                                             feat scans
 
 getFeature :: Int -> IntSet -> IntSet -> Int -> Vector Int -> Scan -> Vector Int
-getFeature pos me foe conn feat (Scan sl ln) =
-    getFeature' scanline me foe conn feat where
+getFeature pos me foe win feat (Scan sl ln) =
+    getFeature' scanline me foe win feat where
         scanline = sl ! ln pos
 
 getFeature' :: Vector Int -> IntSet -> IntSet -> Int -> Vector Int -> Vector Int
-getFeature' sl me foe conn feat = fst $ foldl' getfeat (feat, (0, 0)) sl where
+getFeature' sl me foe win feat = fst $ foldl' getfeat (feat, (0, 0)) sl where
     getfeat :: (Vector Int, (Int, Int)) -> Int -> (Vector Int, (Int, Int))
     getfeat (feat, (acc, depth)) pos | pos `member` foe = (feat, (0, 0))
     getfeat (feat, (acc, depth)) pos | pos `member` me =
@@ -179,7 +178,7 @@ getFeature' sl me foe conn feat = fst $ foldl' getfeat (feat, (0, 0)) sl where
     getfeat (feat, (acc, depth)) pos | otherwise =
         check (feat, (acc, depth + 1))
 
-    check (feat, (acc, depth)) | depth == conn =
+    check (feat, (acc, depth)) | depth == win =
         (Data.Vector.modify
                 (\v -> write v acc ((feat!acc)+1)) feat, (acc', depth - 1))
         where acc' = acc `shiftR` 1
