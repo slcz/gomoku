@@ -29,6 +29,7 @@ data AiState = AiState
     ,   featureMap:: (Vector Int, Int)
     ,   input     :: Vector Int
     ,   theta     :: Vector Float
+    ,   firstMove :: Bool
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -82,10 +83,12 @@ aiInit boardGeom winningStones =
         ,   featureMap = (fromList featureMapping, m + 1)
         ,   input      = replicate (m + m) 0
         ,   theta      = fromList $
-            [0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
+            [0, 0,
+             0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
              0.15, 0.1,   0.62,  0.61, 1.5,
              -0.024, -0.018, -0.03, -0.12, -0.012, -0.022, -0.12, -0.12, -0.36,
              -0.96, -0.006, -0.18, -0.12, -0.74, -0.71, -1.2]
+        ,   firstMove  = True
         }
     where
     emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
@@ -104,30 +107,33 @@ aiInit boardGeom winningStones =
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
+extractAllFeatures featuremap scans white win first black black' pos =
+    firstSet ++
+    zipWith (-) (g black' white pos) (g black white pos) ++
+    zipWith (-) (g white black' pos) (g white black pos) where
+    firstSet = if first then [1, 0] else [0, 1]
+    g black white pos = getDelta featuremap pos scans black white win
+
 aiMove :: StateT AiState IO Pos
 aiMove = do
     AiState dimension win (black, white) slot scans featuremap _ parameters
-            <- get
-    let g black white pos = getDelta featuremap pos scans black white win
-        extFeatures black black' pos =
-            zipWith (-) (g black' white pos) (g black white pos) ++
-            zipWith (-) (g white black' pos) (g white black pos)
-    bestMoves <- return $ evaluate extFeatures parameters black dimension slot
+            first <- get
+    let ext = extractAllFeatures featuremap scans white win first
+    bestMoves <- return $ evaluate ext parameters black dimension slot
     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
     return $ fst $ fromJust $ index bestMoves randCandidate
 
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
-    AiState dimension win (black, white) slot scans featuremap _ parameters
-            <- get
+    AiState dimension win (black, white) slot scans featuremap input parameters
+            first <- get
     pInt   <- return $ pos2Int dimension pos
     black' <- return $ insertSet pInt black
-    let g black white = getDelta featuremap pInt scans black white win
-    delta <- return $
-        (zipWith (-) (g black' white ) (g black white)) ++
-        (zipWith (-) (g white  black') (g white black))
+    delta <- return $ extractAllFeatures featuremap scans white win
+                      first black black' pInt
     modify' (\s -> s {  emptySlot = deleteSet pos slot
-                     ,  players   = (white, black') })
+                     ,  players   = (white, black')
+                     ,  input     = zipWith (+) input delta })
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = liftIO $ putStrLn $ tshow r
