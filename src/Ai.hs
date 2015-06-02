@@ -18,13 +18,16 @@ import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
 import Data.Bits
 import Data.Maybe (fromJust)
-import Debug.Trace
 import System.IO (openFile, hClose, IOMode(..))
 import Text.Read(read)
 import System.Random(randomIO)
+import qualified Data.Matrix as M
+import Debug.Trace
 
 type Pos       = (Int, Int)
 type Dimension = (Int, Int)
+type ThetaType = (M.Matrix Double, M.Matrix Double,
+                  M.Matrix Double, M.Matrix Double)
 
 data AiState = AiState
     {
@@ -35,9 +38,11 @@ data AiState = AiState
     ,   scan      :: [Scan]
     ,   featureMap:: (Vector Int, Int)
     ,   input     :: (Vector Int, Vector Int)
-    ,   theta     :: Vector Float
+    ,   theta     :: ThetaType
     ,   firstMove :: Bool
     ,   training  :: Handle
+    ,   dataset   :: M.Matrix Int
+    ,   thetaFname:: FilePath
     }
 
 data GameResult = GameWin | GameLoss | GameTie deriving (Eq, Show)
@@ -78,21 +83,26 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
     diagRIdx x = x `mod` (w + 1) - 1
     diagLIdx x = x `mod` (w - 1) - w'
 
+inputSize m = 2 + m * 2
+hidSize   m = inputSize m `div` 4
+
 -- board-dimension
 aiInit :: Dimension -> Int -> FilePath -> FilePath -> IO AiState
 aiInit boardGeom winningStones thetaFile trainingFile = do
-    let thetaLength = m + m + 2
-    putStrLn $ tshow featureMapping
-    randTheta <- replicateM thetaLength randomIO :: IO [Float]
-    t' <- handle ((\_ -> return randTheta) :: IOException -> IO [Float]) $
+    let wLen = inputSize m * hidSize m + hidSize m
+        bLen = hidSize m + 1
+    wInit <- replicateM wLen $ ((-)0.5) <$> randomIO :: IO [Double]
+    bInit <- return $ replicate bLen 0.0
+    randTheta <- return $ wInit ++ bInit
+    t' <- handle ((\_ -> return randTheta) :: IOException -> IO [Double]) $
             bracket (openFile thetaFile ReadMode)
             hClose
             $ \handle -> do
                 contents <- hGetContents handle
                 w        <- return $ words contents
-                thetas   <- return $ map read w :: IO [Float]
-                putStrLn $ tshow thetas
-                return thetas
+                return $ map read w :: IO [Double]
+    theta' <- return $ unpackTheta m t'
+    print t'
     h <- handle ((\_ -> error "Can't open file") :: IOException -> IO Handle) $
                 openFile trainingFile AppendMode
     return $ AiState
@@ -104,9 +114,11 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
         ,   scan       = generateScanList boardGeom
         ,   featureMap = (fromList featureMapping, m + 1)
         ,   input      = (replicate m 0, replicate m 0)
-        ,   theta      = fromList t'
+        ,   theta      = theta'
         ,   firstMove  = True
         ,   training   = h
+        ,   dataset    = M.matrix (inputSize m) 0 $ const 0
+        ,   thetaFname = thetaFile
         }
     where
     emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
@@ -140,7 +152,7 @@ extractAllFeatures featuremap scans white win first (b,w) black black' pos =
 aiMove :: StateT AiState IO Pos
 aiMove = do
     AiState dimension win (black, white) slot scans featuremap
-            input parameters first _ <- get
+            input parameters first _ _ _ <- get
     let ext = extractAllFeatures featuremap scans white win first input
     bestMoves <- return $ evaluate ext parameters black dimension slot
     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
@@ -149,22 +161,28 @@ aiMove = do
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
     AiState dimension win (black, white) slot scans featuremap
-            input parameters first h <- get
+            input parameters first h dset _ <- get
     pInt   <- return $ pos2Int dimension pos
     black' <- return $ insertSet pInt black
     (nb, nw) <- return $ extractFeatures featuremap scans white win
                          input black black' pInt
+    allInput <- return $ firstSet first ++ nb ++ nw
+    dset'  <- return $ dset M.<|> M.colVector allInput
+    hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") "" allInput
     modify' (\s -> s {  emptySlot = deleteSet pos slot
                      ,  players   = (white, black')
                      ,  firstMove = not first
-                     ,  input     = (nw, nb)})
-    hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") ""
-        (firstSet first ++ nb ++ nw)
+                     ,  input     = (nw, nb)
+                     ,  dataset   = dset' })
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = do
     h     <- gets training
     first <- gets firstMove
+    (_, m')<- gets featureMap
+    m     <- return $ m' - 1
+    t     <- gets theta
+    tF    <- gets thetaFname
     liftIO $ do
         putStrLn $ tshow r
         final <- return $ case r of
@@ -173,7 +191,12 @@ gameFinish r = do
                             _        -> 0.5
         hPutStrLn h $ tshow final ++ " " ++ tshow (1 - final)
         hClose h
-
+        handle ((\_ -> return ()) :: IOException -> IO ()) $
+            bracket (openFile tF WriteMode)
+            hClose
+            $ \handle -> do
+                packed <- return $ packTheta m t
+                mapM_ (hPutStrLn handle . tshow) packed
 --
 -- return input delta after move.
 --
@@ -208,26 +231,54 @@ getInputs pos scans black white values win = foldl' getInput values scans
 --
 -- Value Function of the board.
 --
-evaluate :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
+evaluate :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
 evaluate extract theta black dim positions = map snd $ candidates where
     e    = eval extract theta black dim (toList positions)
     emax = fst $ maximumByEx (\x y -> fst x `compare` fst y) e
     candidates = filter (\h -> fst h == emax) e
 
-value :: Vector Int -> Vector Float -> Float
-value input theta = sum $ zipWith (\x y -> fromIntegral x * y) input theta
+unpackTheta :: Int -> [Double] -> ThetaType
+unpackTheta m theta =
+    (M.fromList h i w1, M.fromList 1 h w2,
+     M.fromList h 1 b1, M.fromList 1 1 b2) where
+    i = inputSize m
+    h = hidSize   m
+    w1 = theta
+    w2 = drop (i * h) w1
+    b1 = drop h w2
+    b2 = drop h b1
 
-eval :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
-                -> Dimension -> [Pos] -> Vector (Float, (Pos, Int))
+packTheta :: Int -> ThetaType -> Vector Double
+packTheta m (w1, w2, b1, b2) =
+    packT w1 [1..h] <> packT w2 [1..1] <>
+    packT b1 [1..h] <> packT b2 [1..1] where
+    i = inputSize m
+    h = hidSize   m
+    packT w a = concat $ map ((flip M.getRow) w) $ asVector $ fromList a
+
+sigmoid :: Double -> Double
+sigmoid t = 1 / (1 + exp(-t))
+
+-- value :: Vector Int -> Vector Double -> Double
+-- value input theta = sum $ zipWith (\x y -> fromIntegral x * y) input theta
+value :: Vector Int -> ThetaType -> Double
+value input (w1, w2, b1, b2) = out where
+    w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
+    hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
+    w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
+    out = sigmoid (w2h + M.getElem 1 1 b2)
+
+eval :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
+                -> Dimension -> [Pos] -> Vector (Double, (Pos, Int))
 eval _ _ _ _ [] = mempty
 eval extract theta black dim (x:xs) =
     (score, (x, pos2Int dim x)) `cons` rest where
     (score, delta) = evalOne extract theta black dim x
     rest = eval extract theta black dim xs
 
-evalOne :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float ->
-                IntSet -> Dimension -> Pos -> (Float, Bool)
+evalOne :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType ->
+                IntSet -> Dimension -> Pos -> (Double, Bool)
 evalOne extract theta black dim pos = (value feature theta, delta) where
     i        = pos2Int dim pos
     black'   = insertSet i black
