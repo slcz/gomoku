@@ -8,7 +8,7 @@ module Ai ( Pos, Dimension, aiInit, aiMove, peerMove, gameFinish, AiState,
 import Prelude()
 import ClassyPrelude
 import Data.List ((!!), iterate, nub)
-import Data.Vector ((!), modify, replicate)
+import Data.Vector ((!), modify)
 import Data.Vector.Mutable (write)
 import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
@@ -80,7 +80,7 @@ aiInit boardGeom winningStones =
         ,   emptySlot  = emptyBoard
         ,   scan       = generateScanList boardGeom
         ,   featureMap = (fromList featureMapping, m + 1)
-        ,   input      = Data.Vector.replicate (m + m) 0
+        ,   input      = replicate (m + m) 0
         ,   theta      = fromList $
             [0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
              0.15, 0.1,   0.62,  0.61, 1.5,
@@ -104,15 +104,77 @@ aiInit boardGeom winningStones =
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
-value :: Vector Int -> Vector Float -> Float
-value input theta = sum $ zipWith (\x y -> fromIntegral x * y) input theta
+aiMove :: StateT AiState IO Pos
+aiMove = do
+    AiState dimension win (black, white) slot scans featuremap _ parameters
+            <- get
+    let g black white pos = getDelta featuremap pos scans black white win
+        extFeatures black black' pos =
+            zipWith (-) (g black' white pos) (g black white pos) ++
+            zipWith (-) (g white black' pos) (g white black pos)
+    bestMoves <- return $ evaluate extFeatures parameters black dimension slot
+    randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
+    return $ fst $ fromJust $ index bestMoves randCandidate
 
+peerMove :: Pos -> StateT AiState IO ()
+peerMove pos = do
+    AiState dimension win (black, white) slot scans featuremap _ parameters
+            <- get
+    pInt   <- return $ pos2Int dimension pos
+    black' <- return $ insertSet pInt black
+    let g black white = getDelta featuremap pInt scans black white win
+    delta <- return $
+        (zipWith (-) (g black' white ) (g black white)) ++
+        (zipWith (-) (g white  black') (g white black))
+    modify' (\s -> s {  emptySlot = deleteSet pos slot
+                     ,  players   = (white, black') })
+
+gameFinish :: GameResult -> StateT AiState IO ()
+gameFinish r = liftIO $ putStrLn $ tshow r
+
+-- return delta of feature set
+getDelta :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
+            Int -> Vector Int
+getDelta featuremap pos scans black white win =
+    drop 1 $ mergeFeat featuremap $ getInputs pos scans black white
+        initialValues win where
+    initialValues = fromList $ replicate (2^win) 0
+
+mergeFeat :: (Vector Int, Int) -> Vector Int -> Vector Int
+mergeFeat (mp,mx) v = foldl' f (replicate mx 0) (zip mp v) where
+    f acc (idx, v) = Data.Vector.modify
+                        (\v' -> write v' idx (v + (acc!idx))) acc
+
+getInputs::Int -> [Scan] -> IntSet -> IntSet -> Vector Int -> Int -> Vector Int
+getInputs pos scans black white values win = foldl' getInput values scans
+    where
+    getInput value (Scan sl ln) = fst $ foldl' getone (value, (0, 0)) line where
+        line = sl ! ln pos
+
+    getone (values, (acc, depth)) pos | pos `member` white = (values, (0, 0))
+    getone (values, (acc, depth)) pos | pos `member` black =
+        check (values, (acc', depth + 1)) where acc' = acc + (1 `shiftL` depth)
+    getone (values, (acc, depth)) pos | otherwise =
+        check (values, (acc, depth + 1))
+
+    check (values, (acc, depth)) | depth == win =
+        (Data.Vector.modify
+            (\v -> write v acc ((values ! acc) + 1)) values, (acc', depth - 1))
+        where acc' = acc `shiftR` 1
+    check (values, (acc, depth)) | otherwise = (values, (acc, depth))
+
+--
+-- Value Function of the board
+--
 evaluate :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
 evaluate extract theta black dim positions = map snd $ candidates where
     e    = eval extract theta black dim (toList positions)
     emax = fst $ maximumByEx (\x y -> fst x `compare` fst y) e
     candidates = filter (\h -> fst h == emax) e
+
+value :: Vector Int -> Vector Float -> Float
+value input theta = sum $ zipWith (\x y -> fromIntegral x * y) input theta
 
 eval :: (IntSet -> IntSet -> Int -> Vector Int) -> Vector Float -> IntSet
                 -> Dimension -> [Pos] -> Vector (Float, (Pos, Int))
@@ -129,66 +191,3 @@ evalOne extract theta black dim pos = (value feature theta, delta) where
     black'   = insertSet i black
     feature  = extract black black' i
     delta    = any (not . (== 0)) feature
-
-aiMove :: StateT AiState IO Pos
-aiMove = do
-    AiState dimension win (black, white) slot scans featuremap _ parameters
-            <- get
-    let g black white pos = getFeatures featuremap pos scans black white win
-        extFeatures black black' pos =
-            zipWith (-) (g black' white pos) (g black white pos) ++
-            zipWith (-) (g white black' pos) (g white black pos)
-    bestMoves <- return $ evaluate extFeatures parameters black dimension slot
-    randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
-    return $ fst $ fromJust $ index bestMoves randCandidate
-
-peerMove :: Pos -> StateT AiState IO ()
-peerMove pos = do
-    AiState dimension win (black, white) slot scans featuremap _ parameters
-            <- get
-    pInt   <- return $ pos2Int dimension pos
-    black' <- return $ insertSet pInt black
-    let g black white = getFeatures featuremap pInt scans black white win
-    delta <- return $
-        (zipWith (-) (g black' white ) (g black white)) ++
-        (zipWith (-) (g white  black') (g white black))
-    modify' (\s -> s {  emptySlot = deleteSet pos slot
-                     ,  players   = (white, black') })
-
-gameFinish :: GameResult -> StateT AiState IO ()
-gameFinish r = liftIO $ putStrLn $ tshow r
-
--- return deltas of feature set
-getFeatures :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
-                                    Int -> Vector Int
-getFeatures featureMap pos scans me foe win =
-    drop 1 $ mergeFeat featureMap $ getFeatures' pos scans me foe
-        (fromList $ take (2^win) $ repeat 0) win 
-
-mergeFeat :: (Vector Int, Int) -> Vector Int -> Vector Int
-mergeFeat (mp,mx) v = foldl' f (Data.Vector.replicate mx 0) (zip mp v) where
-    f acc (idx, v) = Data.Vector.modify
-                        (\v' -> write v' idx (v + (acc!idx))) acc
-
-getFeatures' pos scans me foe feat win = foldl' (getFeature pos me foe win)
-                                            feat scans
-
-getFeature :: Int -> IntSet -> IntSet -> Int -> Vector Int -> Scan -> Vector Int
-getFeature pos me foe win feat (Scan sl ln) =
-    getFeature' scanline me foe win feat where
-        scanline = sl ! ln pos
-
-getFeature' :: Vector Int -> IntSet -> IntSet -> Int -> Vector Int -> Vector Int
-getFeature' sl me foe win feat = fst $ foldl' getfeat (feat, (0, 0)) sl where
-    getfeat :: (Vector Int, (Int, Int)) -> Int -> (Vector Int, (Int, Int))
-    getfeat (feat, (acc, depth)) pos | pos `member` foe = (feat, (0, 0))
-    getfeat (feat, (acc, depth)) pos | pos `member` me =
-        check (feat, (acc', depth + 1)) where   acc' = acc + (1 `shiftL` depth)
-    getfeat (feat, (acc, depth)) pos | otherwise =
-        check (feat, (acc, depth + 1))
-
-    check (feat, (acc, depth)) | depth == win =
-        (Data.Vector.modify
-                (\v -> write v acc ((feat!acc)+1)) feat, (acc', depth - 1))
-        where acc' = acc `shiftR` 1
-    check (feat, (acc, depth)) | otherwise = (feat, (acc, depth))
