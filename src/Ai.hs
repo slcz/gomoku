@@ -38,6 +38,8 @@ wi d = fst d * 3
 int2Pos d p = (p `mod` wi d - fst d, p `div` wi d)
 pos2Int d (x, y) = y * wi d + x + fst d
 
+-- Generate horizontal/vertical and diagnoal scan lines and
+-- functions to lookup for the line.
 data Scan = Scan
     {
         scanList :: Vector (Vector Int)
@@ -45,45 +47,49 @@ data Scan = Scan
     }
 
 generateScanList :: Dimension -> [Scan]
-generateScanList d = [hScan, vScan, diagRScan, diagLScan] where
-    h' = snd d
-    w' = fst d
-    w  = wi  d
-    fList = fromList . map fromList
-    hScan = Scan (fList$map (take w'.iterate (+1).(+w').(*w)) [0..h'-1])
-            (`div` w)
-    vScan = Scan (fList$map (take h'.iterate (+w).(+w')) [0..w'-1])
-            (\x -> x `mod` w - w')
-    dl = [0 .. w' + w' - 1] :: [Int]
+generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
+                                   [hIdx,  vIdx,  diagRIdx,  diagLIdx ] where
+    build x y = Scan (fromList $ map fromList x) y
+    (h', w', w) = (snd d, fst d, wi d)
+    hScan = map (\x -> take w' $ iterate (+1) $ x * w + w') [0..h'-1]
+    vScan = map (\x -> take h' $ iterate (+w) $ x + w')     [0..w'-1]
+    diagRScan = genDscan diagRClip (+1)  (+(w+1))
+    diagLScan = genDscan diagLClip (+w') (+(w-1))
+
+    src    = [0 .. w' + w' - 1] :: [Int]
     drophead f = map drop (f [0..w'-1])
-    takehead f = map take (f [1..w'-1])
-    gen filterF genF off findF = Scan (fList $ zipWith id filterF
-                (map (take w'.iterate (+off).genF) dl)) findF
-    diagRScan = gen (drophead reverse ++ takehead reverse) (+1) (w+1)
-                (\x -> x `mod` (w + 1) - 1)
-    diagLScan = gen (takehead id ++ drophead id) (+w') (w-1)
-                (\x -> x `mod` (w - 1) - w')
+    droptail f = map take (f [1..w'-1])
+    diagRClip  = drophead reverse ++ droptail reverse
+    diagLClip  = droptail id ++ drophead id
+    genDscan clip offset stride = zipWith id clip $ map genDiag src where
+        genDiag = take w'. iterate stride . offset
+
+    hIdx       = (`div` w)
+    vIdx       = (\x -> x `mod` w - w')
+    diagRIdx x = x `mod` (w + 1) - 1
+    diagLIdx x = x `mod` (w - 1) - w'
 
 -- board-dimension
 aiInit :: Dimension -> Int -> IO AiState
-aiInit d winningStones =
+aiInit boardGeom winningStones =
     return $ AiState
         {
-            dimension = d
-        ,   winCond   = winningStones
-        ,   players   = (mempty, mempty)
-        ,   emptySlot = a
-        ,   scan      = generateScanList d
-        ,   featureMap= (fromList featureMapping, m + 1)
-        ,   input     = Data.Vector.replicate (m + m) 0
-        ,   theta     = fromList $
+            dimension  = boardGeom
+        ,   winCond    = winningStones
+        ,   players    = (mempty, mempty)
+        ,   emptySlot  = emptyBoard
+        ,   scan       = generateScanList boardGeom
+        ,   featureMap = (fromList featureMapping, m + 1)
+        ,   input      = Data.Vector.replicate (m + m) 0
+        ,   theta      = fromList $
             [0.02, 0.015, 0.025, 0.1, 0.01, 0.018, 0.1, 0.1, 0.3, 0.80, 0.005,
              0.15, 0.1,   0.62,  0.61, 1.5,
              -0.024, -0.018, -0.03, -0.12, -0.012, -0.022, -0.12, -0.12, -0.36,
              -0.96, -0.006, -0.18, -0.12, -0.74, -0.71, -1.2]
         }
     where
-    a  = setFromList [(x, y) | x <- [0 .. fst d - 1], y <- [0 .. snd d - 1]]
+    emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
+                                       y <- [0 .. snd boardGeom - 1]]
     l' = [0..(2^winningStones - 1)] :: [Int]
     reverseBit i = snd $ foldr reverseBit' (i,0) ([0 .. winningStones - 1] :: [Int])
     reverseBit' b (a,v) = (a `shiftR` 1, (bset `shiftL` b) .|. v)
