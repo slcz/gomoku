@@ -12,7 +12,7 @@ module Ai ( Pos, Dimension, aiInit, aiMove, stateChange, gameFinish, AiState,
 import Prelude()
 import ClassyPrelude
 import Data.List ((!!), iterate, nub)
-import Data.Vector ((!), modify)
+import Data.Vector ((!), modify, head, tail)
 import Data.Vector.Mutable (write)
 import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
@@ -99,10 +99,9 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
             hClose
             $ \handle -> do
                 contents <- hGetContents handle
-                w        <- return $ words contents
+                w        <- length contents `seq` return (words contents)
                 return $ map read w :: IO [Double]
     theta' <- return $ unpackTheta m t'
-    print t'
     h <- handle ((\_ -> error "Can't open file") :: IOException -> IO Handle) $
                 openFile trainingFile AppendMode
     return $ AiState
@@ -145,7 +144,7 @@ extractFeatures featuremap scans white win (b,w) black black' pos =
 firstSet first = if first then [1, 0] else [0, 1]
 
 extractAllFeatures featuremap scans white win first (b,w) black black' pos =
-    firstSet first ++ bf ++ wf
+    lastEx bf `cons` firstSet first ++ bf ++ wf
     where
     (bf, wf) = extractFeatures featuremap scans white win (b,w) black black' pos
 
@@ -262,8 +261,12 @@ sigmoid t = 1 / (1 + exp(-t))
 
 -- value :: Vector Int -> Vector Double -> Double
 -- value input theta = sum $ zipWith (\x y -> fromIntegral x * y) input theta
+-- The first input is special winning conndition (5 connected stones).
+-- This causes evaluator to return max (1.0) immediately.
 value :: Vector Int -> ThetaType -> Double
-value input (w1, w2, b1, b2) = out where
+value input' _ | Data.Vector.head input' >= 1 = 1.0
+value input' (w1, w2, b1, b2) | otherwise = out where
+    input = Data.Vector.tail input'
     w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
     hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
     w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
