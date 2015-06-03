@@ -277,12 +277,15 @@ evalOne extract theta black dim pos = value feature theta where
 sigmoid :: Double -> Double
 sigmoid t = 1 / (1 + exp(-t))
 
-value :: Vector Int -> ThetaType -> Double
-value input (w1, w2, b1, b2) = out where
+values :: Vector Int -> ThetaType -> (Double, Vector Double)
+values input (w1, w2, b1, b2) = (out, hid) where
     w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
     hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
     w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
     out = sigmoid (w2h + M.getElem 1 1 b2)
+
+value :: Vector Int -> ThetaType -> Double
+value input theta = fst $ values input theta
 
 trainNetwork :: Double -> ThetaType -> M.Matrix Int -> ThetaType
 trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
@@ -290,9 +293,25 @@ trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
     reverseOrder = fromList $ reverse [1..M.ncols dataset] :: Vector Int
 
 trainOne (theta, v') step = (newTheta, prev) where
-    v      = value step theta
+    (v, h) = values step theta
     target = lambda * (v' - v)
     lambda = 0.6
 
     prev   = 1 - (v + target)
-    newTheta = theta -- fix me here!
+    newTheta = optim theta h step v target
+
+optim :: ThetaType -> Vector Double -> Vector Int ->
+         Double -> Double -> ThetaType
+optim old hidden input' output target = (wh', wo', bh, bo) where
+    input = map fromIntegral input' :: Vector Double
+    (wh, wo, bh, bo) = old
+    woV    = M.getRow 1 wo
+    deltaO = - target * deriv output
+    deltaH = zipWith (\a w -> deriv a * w * deltaO) hidden woV
+    wo'    = M.rowVector $ zipWith (\o h -> o - alpha * deltaO * h)
+             woV hidden
+    temp   = map (alpha *) $ M.colVector deltaH `M.multStd` M.rowVector input
+    wh'    = M.matrix (M.nrows wh) (M.ncols wh)
+                (\(r, c) -> M.getElem r c wh - M.getElem r c temp)
+    deriv a = a * (1 - a)
+    alpha   = 0.005
