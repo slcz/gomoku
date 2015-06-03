@@ -144,8 +144,7 @@ extractFeatures featuremap scans white win (b,w) black black' pos =
 firstSet first = if first then [1, 0] else [0, 1]
 
 extractAllFeatures featuremap scans white win first (b,w) black black' pos =
-    lastEx bf `cons` firstSet first ++ bf ++ wf
-    where
+    firstSet first ++ bf ++ wf where
     (bf, wf) = extractFeatures featuremap scans white win (b,w) black black' pos
 
 aiMove :: StateT AiState IO Pos
@@ -176,25 +175,27 @@ stateChange pos = do
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = do
-    h     <- gets training
-    first <- gets firstMove
-    (_, m')<- gets featureMap
-    m     <- return $ m' - 1
-    t     <- gets theta
-    tF    <- gets thetaFname
+    h        <- gets training
+    first    <- gets firstMove
+    (_, m')  <- gets featureMap
+    m        <- return $ m' - 1
+    t        <- gets theta
+    tF       <- gets thetaFname
+    dset     <- gets dataset
+    final    <- return $ case r of
+                            GameWin  -> 1.0
+                            GameLoss -> 1.0
+                            _        -> 0.5
+    newTheta <- return $ trainNetwork final t dset
     liftIO $ do
         putStrLn $ tshow r
-        final <- return $ case r of
-                            GameWin  -> if first then 0 else 1
-                            GameLoss -> if first then 1 else 0
-                            _        -> 0.5
-        hPutStrLn h $ tshow final ++ " " ++ tshow (1 - final)
+        hPutStrLn h $ tshow final
         hClose h
         handle ((\_ -> return ()) :: IOException -> IO ()) $
             bracket (openFile tF WriteMode)
             hClose
             $ \handle -> do
-                packed <- return $ packTheta m t
+                packed <- return $ packTheta m newTheta
                 mapM_ (hPutStrLn handle . tshow) packed
 --
 -- return input delta after move.
@@ -256,34 +257,36 @@ packTheta m (w1, w2, b1, b2) =
     h = hidSize   m
     packT w a = concat $ map ((flip M.getRow) w) $ asVector $ fromList a
 
-sigmoid :: Double -> Double
-sigmoid t = 1 / (1 + exp(-t))
-
--- value :: Vector Int -> Vector Double -> Double
--- value input theta = sum $ zipWith (\x y -> fromIntegral x * y) input theta
--- The first input is special winning conndition (5 connected stones).
--- This causes evaluator to return max (1.0) immediately.
-value :: Vector Int -> ThetaType -> Double
-value input' _ | Data.Vector.head input' >= 1 = 1.0
-value input' (w1, w2, b1, b2) | otherwise = out where
-    input = Data.Vector.tail input'
-    w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
-    hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
-    w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
-    out = sigmoid (w2h + M.getElem 1 1 b2)
-
 eval :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
                 -> Dimension -> [Pos] -> Vector (Double, (Pos, Int))
 eval _ _ _ _ [] = mempty
 eval extract theta black dim (x:xs) =
     (score, (x, pos2Int dim x)) `cons` rest where
-    (score, delta) = evalOne extract theta black dim x
+    score = evalOne extract theta black dim x
     rest = eval extract theta black dim xs
 
+-- The first input is special winning conndition (5 connected stones).
+-- This causes evaluator to return max (1.0) immediately.
 evalOne :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType ->
-                IntSet -> Dimension -> Pos -> (Double, Bool)
-evalOne extract theta black dim pos = (value feature theta, delta) where
+                IntSet -> Dimension -> Pos -> Double
+evalOne extract theta black dim pos = value feature theta where
     i        = pos2Int dim pos
     black'   = insertSet i black
     feature  = extract black black' i
-    delta    = any (not . (== 0)) feature
+
+sigmoid :: Double -> Double
+sigmoid t = 1 / (1 + exp(-t))
+
+value :: Vector Int -> ThetaType -> Double
+value input (w1, w2, b1, b2) = out where
+    w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
+    hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
+    w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
+    out = sigmoid (w2h + M.getElem 1 1 b2)
+
+trainNetwork :: Double -> ThetaType -> M.Matrix Int -> ThetaType
+trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, 1.0 - v')
+    vectorDataset where
+    vectorDataset = map ((flip M.getCol) dataset) reverseOrder
+    reverseOrder = fromList $ reverse [1..M.ncols dataset - 1] :: Vector Int
+    trainOne (theta, v') next = (theta, v')
