@@ -24,12 +24,13 @@ import Data.List ((!!))
 import Data.Set (fromList, delete)
 import Control.Concurrent
 import System.Random
+import System.Exit
 import Ai
 import Control.Monad.Trans.State.Lazy
 
 data PlayMode = Human | AI deriving (Eq, Show)
 
-data Message = Move Pos | Bug | Result GameResult | Start deriving (Eq, Show)
+data Message = Move Pos | Bug | Result GameResult | Start | Cleanup deriving (Eq, Show)
 
 data Player = Player
     {
@@ -208,7 +209,7 @@ stepUnblocked :: Board -> Message -> IO Board
 stepUnblocked board msg =
     let (chTx, chRx) = mapTuple fromJust $ ch board
     in if isTie board || isWin board
-        then return board
+        then return $ initialBoard {ch = ch board }
         else
             (threadDelay $ delay gameConfig) >>
             case msg of
@@ -237,15 +238,17 @@ runAI state channels = do
                         Result r' -> r'
                         _         -> GameTie
             state' <- execStateT (gameFinish r) state
-            -- echo finishing condition back
-            atomically $ writeTChan chTx m
             return state'
 
 startAI :: (TChan Message, TChan Message) -> IO ()
 startAI channels = do
     state <- aiInit (dimension gameConfig) (winCondition gameConfig)
                     (thetaFile gameConfig) (trainingFile gameConfig)
+    let playmode = mapTuple playMode . player $ initialBoard
+    when (fst playmode == AI) $
+        atomically $ (flip writeTChan) Start $ sender channels
     runAI state channels
+    startAI channels
     return ()
 
 main :: IO ()
@@ -262,8 +265,8 @@ main = do
     board <- return $ initialBoard {ch = mapTuple Just channels }
 
     -- Sending message to jumpstart the first AI
-    when (fst playmode == AI) $
-        atomically $ (flip writeTChan) Start $ sender channels
+    -- when (fst playmode == AI) $
+    --    atomically $ (flip writeTChan) Start $ sender channels
     
     let scaling = (* gridSize gameConfig)
     playIO (InWindow "GOMOKU" (1, 1) $
@@ -275,7 +278,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black AI, Player mempty white Human)
+        player  = (Player mempty black AI, Player mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)

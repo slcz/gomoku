@@ -295,14 +295,14 @@ trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
 trainOne (theta, v') step = (newTheta, prev) where
     (v, h) = values step theta
     target = lambda * (v' - v)
-    lambda = 0.6
+    lambda = 0.9
 
     prev   = 1 - (v + target)
     newTheta = optim theta h step v target
 
 optim :: ThetaType -> Vector Double -> Vector Int ->
          Double -> Double -> ThetaType
-optim old hidden input' output target = (wh', wo', bh, bo) where
+optim old hidden input' output target = (wh', wo', bh', bo') where
     input = map fromIntegral input' :: Vector Double
     (wh, wo, bh, bo) = old
     woV    = M.getRow 1 wo
@@ -310,8 +310,10 @@ optim old hidden input' output target = (wh', wo', bh, bo) where
     deltaH = zipWith (\a w -> deriv a * w * deltaO) hidden woV
     wo'    = M.rowVector $ zipWith (\o h -> o - alpha * deltaO * h)
              woV hidden
+    bo'    = M.matrix 1 1 (\_ -> M.getElem 1 1 bo - alpha * deltaO)
     temp   = map (alpha *) $ M.colVector deltaH `M.multStd` M.rowVector input
     wh'    = M.matrix (M.nrows wh) (M.ncols wh)
                 (\(r, c) -> M.getElem r c wh - M.getElem r c temp)
+    bh'    = M.colVector $ zipWith (-) (M.getCol 1 bh) (map (alpha *) deltaH)
     deriv a = a * (1 - a)
-    alpha   = 0.005
+    alpha   = 0.01
