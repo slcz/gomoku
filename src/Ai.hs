@@ -23,6 +23,7 @@ import Text.Read(read)
 import System.Random(randomIO)
 import qualified Data.Matrix as M
 import Debug.Trace
+import System.Directory(copyFile)
 
 type Pos       = (Int, Int)
 type Dimension = (Int, Int)
@@ -197,6 +198,7 @@ gameFinish r = do
             $ \handle -> do
                 packed <- return $ packTheta m newTheta
                 mapM_ (hPutStrLn handle . tshow) packed
+        copyFile tF (tF ++ ".bak")
 --
 -- return input delta after move.
 --
@@ -292,13 +294,14 @@ trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
     vdata = map ((flip M.getCol) dataset) reverseOrder
     reverseOrder = fromList $ reverse [1..M.ncols dataset] :: Vector Int
 
-trainOne (theta, v') step = (newTheta, prev) where
+trainOne (theta, v') step = trace (show target ++ " : " ++ (show v) ++ " : " ++ show (fst (values step newTheta))) $ (newTheta, prev) where
     (v, h) = values step theta
     target = lambda * (v' - v)
     lambda = 0.9
 
     prev   = 1 - (v + target)
-    newTheta = optim theta h step v target
+    -- newTheta = optim theta h step v target
+    newTheta = foldr (\_ theta' -> optim theta' h step v target) theta ([1 .. 50] :: [Int])
 
 optim :: ThetaType -> Vector Double -> Vector Int ->
          Double -> Double -> ThetaType
