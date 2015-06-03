@@ -182,10 +182,10 @@ gameFinish r = do
     t        <- gets theta
     tF       <- gets thetaFname
     dset     <- gets dataset
-    final    <- return $ case r of
-                            GameWin  -> 1.0
-                            GameLoss -> 1.0
-                            _        -> 0.5
+    final    <-
+        return $ case r of
+                    GameTie  -> 0.5
+                    _        -> 1.0
     newTheta <- return $ trainNetwork final t dset
     liftIO $ do
         putStrLn $ tshow r
@@ -285,8 +285,14 @@ value input (w1, w2, b1, b2) = out where
     out = sigmoid (w2h + M.getElem 1 1 b2)
 
 trainNetwork :: Double -> ThetaType -> M.Matrix Int -> ThetaType
-trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, 1.0 - v')
-    vectorDataset where
-    vectorDataset = map ((flip M.getCol) dataset) reverseOrder
-    reverseOrder = fromList $ reverse [1..M.ncols dataset - 1] :: Vector Int
-    trainOne (theta, v') next = (theta, v')
+trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
+    vdata = map ((flip M.getCol) dataset) reverseOrder
+    reverseOrder = fromList $ reverse [1..M.ncols dataset] :: Vector Int
+
+trainOne (theta, v') step = (newTheta, prev) where
+    v      = value step theta
+    target = lambda * (v' - v)
+    lambda = 0.6
+
+    prev   = 1 - (v + target)
+    newTheta = theta -- fix me here!
