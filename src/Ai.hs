@@ -34,7 +34,7 @@ data AiState = AiState
     {
         dimension :: Dimension
     ,   winCond   :: Int              -- Number of connected stones
-    ,   players   :: (IntSet, IntSet) -- first of tuple moves
+    ,   players   :: (IntSet, IntSet)
     ,   emptySlot :: Set Pos
     ,   scan      :: [Scan]
     ,   featureMap:: (Vector Int, Int)
@@ -171,7 +171,7 @@ stateChange pos = do
     modify' (\s -> s {  emptySlot = deleteSet pos slot
                      ,  players   = (white, black')
                      ,  firstMove = not first
-                     ,  input     = (nw, nb)
+                     ,  input     = (nb, nw)
                      ,  dataset   = dset' })
 
 gameFinish :: GameResult -> StateT AiState IO ()
@@ -297,11 +297,12 @@ trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
 trainOne (theta, v') step = trace (show target ++ " : " ++ (show v) ++ " : " ++ show (fst (values step newTheta))) $ (newTheta, prev) where
     (v, h) = values step theta
     target = lambda * (v' - v)
-    lambda = 0.9
+    lambda = 0.6
 
-    prev   = 1 - (v + target)
+    prev   = 1 - target
     -- newTheta = optim theta h step v target
-    newTheta = foldr (\_ theta' -> optim theta' h step v target) theta ([1 .. 50] :: [Int])
+    newTheta = foldr (\_ theta' -> optim theta' h step v target)
+               theta ([1 .. 50] :: [Int])
 
 optim :: ThetaType -> Vector Double -> Vector Int ->
          Double -> Double -> ThetaType
