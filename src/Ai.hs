@@ -129,7 +129,7 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
         where bset = 1 .&. a
     allPatterns = [0..(2^winningStones - 1)] :: [Int]
     mappings = map filterFeatures allPatterns
-    filterFeatures x | popCount   x < 1 = 0
+    filterFeatures x | popCount   x < 2 = 0
     filterFeatures x | reverseBit x < x = reverseBit x
     filterFeatures x | otherwise        = x
     compressed = zip (nub mappings) [0..]
@@ -137,8 +137,8 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
     m = maximumEx featureMapping
 
 extractFeatures featuremap scans white win (b,w) black black' pos =
-    (zipWith (+) b $ zipWith (-) (g black' white pos) (g black white pos),
-     zipWith (+) w $ zipWith (-) (g white black' pos) (g white black pos))
+    (zipWith (-) (g black' white pos) (g black white pos),
+     zipWith (-) (g white black' pos) (g white black pos))
     where
     g black white pos = getDelta featuremap pos scans black white win
 
@@ -294,12 +294,12 @@ trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
     vdata = map ((flip M.getCol) dataset) reverseOrder
     reverseOrder = fromList $ reverse [1..M.ncols dataset] :: Vector Int
 
-trainOne (theta, v') step = trace (show target ++ " : " ++ (show v) ++ " : " ++ show (fst (values step newTheta))) $ (newTheta, prev) where
+trainOne (theta, v') step = (newTheta, prev) where
     (v, h) = values step theta
     target = lambda * (v' - v)
-    lambda = 0.6
+    lambda = 0.8
 
-    prev   = 1 - target
+    prev   = 1 - (v + target)
     -- newTheta = optim theta h step v target
     newTheta = foldr (\_ theta' -> optim theta' h step v target)
                theta ([1 .. 50] :: [Int])
@@ -320,4 +320,4 @@ optim old hidden input' output target = (wh', wo', bh', bo') where
                 (\(r, c) -> M.getElem r c wh - M.getElem r c temp)
     bh'    = M.colVector $ zipWith (-) (M.getCol 1 bh) (map (alpha *) deltaH)
     deriv a = a * (1 - a)
-    alpha   = 0.01
+    alpha   = 0.05
