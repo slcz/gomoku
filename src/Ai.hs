@@ -83,7 +83,7 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
     diagRIdx x = x `mod` (w + 1) - 1
     diagLIdx x = x `mod` (w - 1) - w'
 
-inputSize m = 3 + m * 3
+inputSize m = m * 3
 hidSize   m = inputSize m `div` 4
 
 -- board-dimension
@@ -143,7 +143,7 @@ extractFeatures featuremap scans white win black black' pos =
 firstSet first = if first then [1, 0] else [0, 1]
 
 extractAllFeatures featuremap scans white win first black black' pos =
-    firstSet first ++ bf ++ wf ++ (zipWith (-) bf wf) where
+    bf ++ wf ++ (zipWith (-) bf wf) where
         (bf, wf) = extractFeatures featuremap scans white win black black' pos
 
 aiMove :: Float -> StateT AiState IO Pos
