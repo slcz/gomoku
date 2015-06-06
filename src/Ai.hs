@@ -148,20 +148,37 @@ extractAllFeatures featuremap scans white win first black black' pos =
 
 aiMove :: Float -> StateT AiState IO Pos
 aiMove epsilon = do
-    AiState dimension win (black, white) slot scans featuremap
+    AiState dimension@(dx,dy) win (black, white) slot scans featuremap
             parameters first _ _ _ <- get
-    rdm <- if epsilon >= 0.000001
-        then liftIO $ randomRIO (0, floor (1 / epsilon) :: Int)
-        else return 0
-    if rdm == 1
+    if (not $ null black)
         then do
-            size <- liftIO $ randomRIO (0, length slot - 1)
-            return (setToList slot !! size)
-        else do
-            let ext = extractAllFeatures featuremap scans white win first
-            bestMoves <- return $ evaluate ext parameters black dimension slot
-            randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
-            return $ fst $ fromJust $ index bestMoves randCandidate
+            rdm <- if epsilon >= 0.000001
+                then liftIO $ randomRIO (0, floor (1 / epsilon) :: Int)
+                else return 0
+            if rdm == 1
+                then do
+                    size <- liftIO $ randomRIO (0, length slot - 1)
+                    return (setToList slot !! size)
+                else do
+                    let ext = extractAllFeatures featuremap scans white win first
+                    bestMoves <- return $ evaluate ext parameters black dimension slot
+                    randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
+                    return $ fst $ fromJust $ index bestMoves randCandidate
+        else
+            if first
+                then return (dx `div` 2, dy `div` 2)
+                else neighbour dx dy (int2Pos dimension $ headEx white) where
+                    neighbour dx dy white@(x', y') = do
+                        (x, y) <- genNeighbour
+                        m@(rx,ry) <- return (x' + x, y' + y)
+                        if rx < 0 || rx >= dx || ry <0 || ry >= dy
+                            then neighbour dx dy white
+                            else return m
+                    genNeighbour = do x <- liftIO $ randomRIO (-1, 1)
+                                      y <- liftIO $ randomRIO (-1, 1)
+                                      if x == 0 && y == 0
+                                          then genNeighbour
+                                          else return (x, y)
 
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
