@@ -221,18 +221,18 @@ stepUnblocked board msg =
                     return newBoard
             _       -> return board
 
-runAI :: AiState -> (TChan Message, TChan Message) -> IO AiState
-runAI state channels = do
+runAI :: AiState -> (TChan Message, TChan Message) -> Float -> IO AiState
+runAI state channels epsilon = do
     let -- Flip sender and receiver at AI agent
         (chTx, chRx) = (receiver channels, sender channels)
     msg <- atomically $ readTChan chRx
     case msg of
         Start -> do
-            (p, state') <- runStateT aiMove state
+            (p, state') <- runStateT (aiMove epsilon) state
             atomically $ writeTChan chTx $ Move p
-            runAI state' channels
+            runAI state' channels epsilon
         Move pos -> do  state' <- execStateT (stateChange pos) state
-                        runAI state' channels
+                        runAI state' channels epsilon
         m -> do
             let r = case m of
                         Result r' -> r'
@@ -240,15 +240,15 @@ runAI state channels = do
             state' <- execStateT (gameFinish r) state
             return state'
 
-startAI :: (TChan Message, TChan Message) -> IO ()
-startAI channels = do
+startAI :: (TChan Message, TChan Message) -> Float -> IO ()
+startAI channels epsilon = do
     state <- aiInit (dimension gameConfig) (winCondition gameConfig)
                     (thetaFile gameConfig) (trainingFile gameConfig)
     let playmode = mapTuple playMode . player $ initialBoard
     when (fst playmode == AI) $
         atomically $ (flip writeTChan) Start $ sender channels
-    runAI state channels
-    startAI channels
+    runAI state channels epsilon
+    startAI channels epsilon
     return ()
 
 main :: IO ()
@@ -256,11 +256,15 @@ main = do
     let playmode = mapTuple playMode . player $ initialBoard
         ch = (newTChanIO, newTChanIO)
 
+    epsilon <- return $ if playmode == (AI, AI)
+                            then 0.01
+                            else 0
+
     -- create channels for AIs
     channels <- (uncurry $ liftM2 (,)) ch
 
     -- fork task for AI agent
-    _ <- forkIO (startAI channels)
+    _ <- forkIO (startAI channels epsilon)
 
     board <- return $ initialBoard {ch = mapTuple Just channels }
 
@@ -278,7 +282,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black Human, Player mempty white AI)
+        player  = (Player mempty black AI, Player mempty white AI)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)

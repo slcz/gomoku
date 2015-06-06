@@ -6,7 +6,7 @@
 {-# LANGUAGE OverloadedLists   #-}
 {-# LANGUAGE TypeFamilies      #-}
 
-module Ai ( Pos, Dimension, aiInit, aiMove, stateChange, gameFinish, AiState,
+module Ai ( Pos, Dimension, aiInit, stateChange, gameFinish, AiState, aiMove,
             GameResult (..)) where
 
 import Prelude()
@@ -38,7 +38,6 @@ data AiState = AiState
     ,   emptySlot :: Set Pos
     ,   scan      :: [Scan]
     ,   featureMap:: (Vector Int, Int)
-    ,   input     :: (Vector Int, Vector Int)
     ,   theta     :: ThetaType
     ,   firstMove :: Bool
     ,   training  :: Handle
@@ -84,7 +83,7 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
     diagRIdx x = x `mod` (w + 1) - 1
     diagLIdx x = x `mod` (w - 1) - w'
 
-inputSize m = 2 + m * 2
+inputSize m = 3 + m * 3
 hidSize   m = inputSize m `div` 4
 
 -- board-dimension
@@ -113,7 +112,6 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
         ,   emptySlot  = emptyBoard
         ,   scan       = generateScanList boardGeom
         ,   featureMap = (fromList featureMapping, m + 1)
-        ,   input      = (replicate m 0, replicate m 0)
         ,   theta      = theta'
         ,   firstMove  = True
         ,   training   = h
@@ -136,7 +134,7 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
-extractFeatures featuremap scans white win (b,w) black black' pos =
+extractFeatures featuremap scans white win black black' pos =
     (zipWith (-) (g black' white pos) (g black white pos),
      zipWith (-) (g white black' pos) (g white black pos))
     where
@@ -144,34 +142,40 @@ extractFeatures featuremap scans white win (b,w) black black' pos =
 
 firstSet first = if first then [1, 0] else [0, 1]
 
-extractAllFeatures featuremap scans white win first (b,w) black black' pos =
-    firstSet first ++ bf ++ wf where
-    (bf, wf) = extractFeatures featuremap scans white win (b,w) black black' pos
+extractAllFeatures featuremap scans white win first black black' pos =
+    firstSet first ++ bf ++ wf ++ (zipWith (-) bf wf) where
+        (bf, wf) = extractFeatures featuremap scans white win black black' pos
 
-aiMove :: StateT AiState IO Pos
-aiMove = do
+aiMove :: Float -> StateT AiState IO Pos
+aiMove epsilon = do
     AiState dimension win (black, white) slot scans featuremap
-            input parameters first _ _ _ <- get
-    let ext = extractAllFeatures featuremap scans white win first input
-    bestMoves <- return $ evaluate ext parameters black dimension slot
-    randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
-    return $ fst $ fromJust $ index bestMoves randCandidate
+            parameters first _ _ _ <- get
+    rdm <- if epsilon >= 0.000001
+        then liftIO $ randomRIO (0, floor (1 / epsilon) :: Int)
+        else return 0
+    if rdm == 1
+        then do
+            size <- liftIO $ randomRIO (0, length slot - 1)
+            return (setToList slot !! size)
+        else do
+            let ext = extractAllFeatures featuremap scans white win first
+            bestMoves <- return $ evaluate ext parameters black dimension slot
+            randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
+            return $ fst $ fromJust $ index bestMoves randCandidate
 
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
     AiState dimension win (black, white) slot scans featuremap
-            input parameters first h dset _ <- get
+            parameters first h dset _ <- get
     pInt   <- return $ pos2Int dimension pos
     black' <- return $ insertSet pInt black
-    (nb, nw) <- return $ extractFeatures featuremap scans white win
-                         input black black' pInt
-    allInput <- return $ firstSet first ++ nb ++ nw
+    allInput <- return $ extractAllFeatures featuremap scans white win
+                         first black black' pInt
     dset'  <- return $ dset M.<|> M.colVector allInput
     hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") "" allInput
     modify' (\s -> s {  emptySlot = deleteSet pos slot
                      ,  players   = (white, black')
                      ,  firstMove = not first
-                     ,  input     = (nb, nw)
                      ,  dataset   = dset' })
 
 gameFinish :: GameResult -> StateT AiState IO ()
@@ -296,13 +300,12 @@ trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
 
 trainOne (theta, v') step = (newTheta, prev) where
     (v, h) = values step theta
-    target = lambda * (v' - v)
+    target = v' - v
     lambda = 0.8
-
-    prev   = 1 - (v + target)
+    prev   = 1 - (v + lambda * target)
     -- newTheta = optim theta h step v target
     newTheta = foldr (\_ theta' -> optim theta' h step v target)
-               theta ([1 .. 50] :: [Int])
+               theta ([1 .. 25] :: [Int])
 
 optim :: ThetaType -> Vector Double -> Vector Int ->
          Double -> Double -> ThetaType
