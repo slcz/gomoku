@@ -197,7 +197,10 @@ sendmsg rec msg board = do
 nextAIMove pos board = fst <$> nextState board pos
 
 step :: Float -> Board -> IO Board
-step _ board | (playMode . fst . player $ board) == Human = return board
+step _ board | (playMode . fst . player $ board) == Human =
+    if isTie board || isWin board
+        then return $ initialBoard { ch = ch board }
+        else return board
 step _ board = do
     let (chTx, chRx) = mapTuple fromJust $ ch board
     maybeMsg <- atomically $ tryReadTChan chRx
