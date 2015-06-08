@@ -305,7 +305,7 @@ trainOne (theta, v') step = (newTheta, prev) where
     prev   = 1 - (v + lambda * target)
     -- newTheta = optim theta h step v target
     newTheta = foldr (\_ theta' -> optim theta' h step v target)
-               theta ([1 .. 25] :: [Int])
+               theta ([1 .. 10] :: [Int])
 
 optim :: ThetaType -> Vector Double -> Vector Int ->
          Double -> Double -> ThetaType
@@ -323,4 +323,4 @@ optim old hidden input' output target = (wh', wo', bh', bo') where
                 (\(r, c) -> M.getElem r c wh - M.getElem r c temp)
     bh'    = M.colVector $ zipWith (-) (M.getCol 1 bh) (map (alpha *) deltaH)
     deriv a = a * (1 - a)
-    alpha   = 0.05
+    alpha   = 0.01
