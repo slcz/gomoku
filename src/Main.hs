@@ -45,6 +45,7 @@ data Board = Board
     ,   totalMoves  :: Int
     ,   win         :: Set Pos
     ,   ch          :: (Maybe (TChan Message), Maybe (TChan Message))
+    ,   conf        :: Config
     }
 
 (sender, receiver) = (fst, snd)
@@ -82,7 +83,7 @@ walkDirection set dimension position (deltax, deltay) =
     in (oneDirection position 1) <> (oneDirection position (-1))
 
 isTie board =
-    let d = dimension gameConfig in (fst d) * (snd d) <= totalMoves board
+    let d = dimension (conf board) in (fst d) * (snd d) <= totalMoves board
 
 isWin board = not . null . win $ board
 
@@ -95,27 +96,28 @@ getGameEndMsg board | isWin board = (Result GameLoss, Result GameWin)
 -- A stone is connected to another if it's adjacent
 -- either horizontally, vertially or diagnoally.
 --
-checkWinCondition :: Set Pos -> Dimension -> Pos -> Set Pos
-checkWinCondition set dimension position =
+checkWinCondition :: Set Pos -> Dimension -> Pos -> Int -> Set Pos
+checkWinCondition set dimension position win =
     let dir :: [Pos]
         dir = [(1, 0), (0, 1), (1, 1), ((-1), 1)]
         walk = walkDirection set dimension position
-    in  unions . filter ((==winCondition gameConfig) . length) . map walk $ dir
+    in  unions . filter ((== win) . length) . map walk $ dir
 
 -- Declare picture as semigroup in order to use <>
 instance Semigroup Picture
 
 -- convinent function to applies offset and locate the board to the
 -- center of screen
-(shiftx, shifty) = mapTuple shiftFun $ dimension gameConfig where
-    shiftFun = negate . fromIntegral . (* (gridSize gameConfig `div` 2))
+shiftFun g = negate . fromIntegral . (* (g `div` 2))
+shiftx g d = shiftFun g (fst d)
+shifty g d = shiftFun g (snd d)
 
 -- Draw board and stones. First draws grid, then stones of white and black,
 -- finally a small square for the group stones that are connected (winner
 -- side).
 draw :: Board -> IO Picture
-draw board = return $ translate shiftx shifty pic where
-    Config gs (boundaryX, boundaryY) _ ss mark _ _ margin ts _ _ _ = gameConfig
+draw board = return $ translate (shiftx gs d) (shifty gs d) pic where
+    Config gs d@(boundaryX, boundaryY) _ ss mark _ _ margin ts _ _ _ = conf board
 
     pic = grid <> plays <> wins <> context <> gameInfo
 
@@ -141,7 +143,6 @@ draw board = return $ translate shiftx shifty pic where
                                         ((fromIntegral gs) * mark))
                     |   (mx, my) <- toList $ win board ]
 
-    d = dimension gameConfig
     contextX = fromIntegral $ gs * (fst d + 1) + margin
     contextY = fromIntegral $ gs * (snd d `div` 2)
     context = translate contextX contextY $
@@ -156,7 +157,7 @@ draw board = return $ translate shiftx shifty pic where
 
 nextState :: Board -> Pos -> IO (Board, Bool)
 nextState board pos = do
-    let Config gs' dimBoard _ ss mark _ _ _ _ _ _ _ = gameConfig
+    let Config gs' dimBoard _ ss mark _ _ _ _ _ _ _ = conf board
         stones   = stoneSet $ fst $ player board
         update = pos `Data.Set.insert` stones
         allstones = uncurry union $ mapTuple stoneSet $ player board
@@ -167,7 +168,8 @@ nextState board pos = do
                 player = swap ((fst $ player board)
                                     { stoneSet = update },
                                  (snd $ player board)),
-                win  = checkWinCondition update dimBoard pos},
+                win  = checkWinCondition update dimBoard pos
+                        (winCondition $ conf board)},
                 True)
         else return (board, False)
 
@@ -177,10 +179,11 @@ input _ board | not . null . win $ board = return board
 input _ board | isTie board  = return board
 input _ board | (playMode . fst . player $ board) == AI = return board
 input (EventKey (MouseButton LeftButton) Up _ (mousex, mousey)) board = do
-    let sc = fromIntegral $ gridSize gameConfig
+    let sc = fromIntegral $ gridSize $ conf board
         snap     = floor . (/ sc)
         -- pos@(x, y) is normalized position of the move.
-        pos@(x, y) = (snap (mousex - shiftx), snap (mousey - shifty))
+        pos@(x, y) = (snap (mousex - (shiftx g d)), snap (mousey - (shifty g d)))
+        (g, d) = (gridSize $ conf board, dimension $ conf board)
     (newBoard, legal) <- nextState board pos
     let r = fromJust $ sender $ ch board
     when legal $ sendmsg r (Move pos) newBoard
@@ -199,7 +202,7 @@ nextAIMove pos board = fst <$> nextState board pos
 step :: Float -> Board -> IO Board
 step _ board | (playMode . fst . player $ board) == Human =
     if isTie board || isWin board
-        then return $ buildBoard (ch board) (mode gameConfig)
+        then return $ buildBoard (ch board) (conf board)
         else return board
 step _ board = do
     let (chTx, chRx) = mapTuple fromJust $ ch board
@@ -212,9 +215,9 @@ stepUnblocked :: Board -> Message -> IO Board
 stepUnblocked board msg =
     let (chTx, chRx) = mapTuple fromJust $ ch board
     in if isTie board || isWin board
-        then return $ buildBoard (ch board) (mode gameConfig)
+        then return $ buildBoard (ch board) (conf board)
         else
-            (threadDelay $ delay gameConfig) >>
+            (threadDelay $ delay $ conf board) >>
             case msg of
             Move pos ->
                 do  newBoard <- nextAIMove pos board
@@ -243,23 +246,25 @@ runAI state channels epsilon = do
             state' <- execStateT (gameFinish r) state
             return state'
 
-startAI :: (TChan Message, TChan Message) -> Float -> IO ()
-startAI channels epsilon = do
-    state <- aiInit (dimension gameConfig) (winCondition gameConfig)
-                    (thetaFile gameConfig)
-    let playmode = mode gameConfig
+startAI :: Board -> (TChan Message, TChan Message) -> Float -> IO ()
+startAI board channels epsilon = do
+    let c = conf board
+    state <- aiInit (dimension c) (winCondition c) (thetaFile c)
+    let playmode = mode c
     when (fst playmode == AI) $
         atomically $ (flip writeTChan) Start $ sender channels
     runAI state channels epsilon
-    startAI channels epsilon
+    startAI board channels epsilon
     return ()
 
-buildBoard channels playmode =
+buildBoard channels config =
     let i = player initialBoard
+        playmode = mode config
     in initialBoard {
                ch = channels,
                player = ((fst i) { playMode = fst playmode },
-                         (snd i) { playMode = snd playmode }) }
+                         (snd i) { playMode = snd playmode }),
+               conf = config }
 
 main :: IO ()
 main = do
@@ -273,20 +278,17 @@ main = do
     -- create channels for AIs
     channels <- (uncurry $ liftM2 (,)) ch
 
+    board  <- return $ buildBoard (mapTuple Just channels) gameConfig
+    config <- return $ conf board
+
     -- fork task for AI agent
-    _ <- forkIO (startAI channels epsilon)
+    _ <- forkIO (startAI board channels epsilon)
 
-    board <- return $ buildBoard (mapTuple Just channels) playmode
-
-    -- Sending message to jumpstart the first AI
-    -- when (fst playmode == AI) $
-    --    atomically $ (flip writeTChan) Start $ sender channels
-    
-    let scaling = (* gridSize gameConfig)
+    let scaling = (* gridSize config)
     playIO (InWindow "GOMOKU" (1, 1) $
-                mapTuple scaling $ dimension gameConfig)
-           (background gameConfig)
-           (pollInterval gameConfig)
+                mapTuple scaling $ dimension config)
+           (background config)
+           (pollInterval config)
            board draw input step
 
 -- Initial configurations
@@ -296,6 +298,7 @@ initialBoard = Board
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
+    ,   conf      = gameConfig
     }
 
 gameConfig = Config
