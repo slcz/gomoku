@@ -1,6 +1,6 @@
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 -- Temporal difference based learning algorithm.
---------------------------------------------------------------------------------
+-------------------------------------------------------------------------------
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists   #-}
@@ -50,7 +50,7 @@ data AiState = AiState
     ,   scan      :: [Scan]
     ,   featureMap:: (Vector Int, Int)
     ,   theta     :: Theta
-    ,   firstMove :: Bool
+    ,   blackMov :: Bool
     ,   dataset   :: M.Matrix Int
     ,   thetaFname:: FilePath
     }
@@ -138,7 +138,7 @@ aiInit boardGeom winningCond thetaFile = do
         ,   scan       = generateScanList boardGeom
         ,   featureMap = (fromList featureMapping, m + 1)
         ,   theta      = initialTheta
-        ,   firstMove  = True
+        ,   blackMov    = True
         ,   dataset    = M.matrix (inputSize m) 0 $ const 0
         ,   thetaFname = thetaFile
         }
@@ -167,22 +167,22 @@ aiInit boardGeom winningCond thetaFile = do
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
-extractFeatures featuremap scans white win black pos =
+extractFeatures featuremap scans sndMov win fstMov pos =
     zipWith (+) (map (\x -> if x /= 0 then x + 1 else x) a) b
     where
-    a = zipWith (-) (g black' white pos) (g black white pos)
-    b = zipWith (-) (g white' black pos) (g white black pos)
-    black' = insertSet pos black
-    white' = insertSet pos white
-    g black white pos = getDelta featuremap pos scans black white win
+    a = zipWith (-) (g fstMov' sndMov pos) (g fstMov sndMov pos)
+    b = zipWith (-) (g sndMov' fstMov pos) (g sndMov fstMov pos)
+    fstMov' = insertSet pos fstMov
+    sndMov' = insertSet pos sndMov
+    g fstMov sndMov pos = getDelta featuremap pos scans fstMov sndMov win
 
 firstSet first = if first then [1, 0] else [0, 1]
 
 aiMove :: Float -> StateT AiState IO Pos
 aiMove epsilon = do
-    AiState dimension@(dx,dy) win (black, white) slot scans featuremap
+    AiState dimension@(dx,dy) win (fstMov, sndMov) slot scans featuremap
             parameters first _ _ <- get
-    if (not first) || (not $ null black)
+    if (not first) || (not $ null fstMov)
         then do
             rdm <- if epsilon >= 0.000001
                 then liftIO $ randomRIO (0, floor (1 / epsilon) :: Int)
@@ -192,28 +192,28 @@ aiMove epsilon = do
                     size <- liftIO $ randomRIO (0, length slot - 1)
                     return (setToList slot !! size)
                 else do
-                    let ext = extractFeatures featuremap scans white win
-                    bestMoves <- return $ evaluate ext parameters black dimension slot
+                    let ext = extractFeatures featuremap scans sndMov win
+                    bestMoves <- return $ evaluate ext parameters fstMov dimension slot
                     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
                     return $ fst $ fromJust $ index bestMoves randCandidate
         else return (dx `div` 2, dy `div` 2)
 
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
-    AiState dimension win (black, white) slot scans featuremap
+    AiState dimension win (fstMov, sndMov) slot scans featuremap
             parameters first dset _ <- get
     pInt   <- return $ pos2Int dimension pos
-    black' <- return $ insertSet pInt black
-    allInput <- return $ extractFeatures featuremap scans white win black pInt
+    fstMov' <- return $ insertSet pInt fstMov
+    allInput <- return $ extractFeatures featuremap scans sndMov win fstMov pInt
     dset'  <- return $ dset M.<|> M.colVector allInput
     modify' (\s -> s {  emptySlot = deleteSet pos slot
-                     ,  players   = (white, black')
-                     ,  firstMove = not first
+                     ,  players   = (sndMov, fstMov')
+                     ,  blackMov = not first
                      ,  dataset   = dset' })
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = do
-    first    <- gets firstMove
+    first    <- gets blackMov
     (_, m')  <- gets featureMap
     m        <- return $ m' - 1
     t        <- gets theta
@@ -237,8 +237,8 @@ gameFinish r = do
 --
 getDelta :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
             Int -> Vector Int
-getDelta (mapping, size) pos scans black white win =
-    drop 1 $ compress $ getInputs pos scans black white
+getDelta (mapping, size) pos scans fstMov sndMov win =
+    drop 1 $ compress $ getInputs pos scans fstMov sndMov
         initialValues win where
     initialValues = fromList $ replicate (2 ^ win) 0
     compress v = foldl' f (replicate size 0) (zip mapping v) where
@@ -246,13 +246,13 @@ getDelta (mapping, size) pos scans black white win =
             (\v' -> write v' i (v + (values ! i))) values
 
 getInputs::Int -> [Scan] -> IntSet -> IntSet -> Vector Int -> Int -> Vector Int
-getInputs pos scans black white values win = foldl' getInput values scans
+getInputs pos scans fstMov sndMov values win = foldl' getInput values scans
     where
-    getInput value (Scan sl ln) = fst $ foldl' getone (value, (0, 0)) line where
-        line = sl ! ln pos
+    getInput value (Scan sl ln) = fst $ foldl' getone (value, (0, 0))
+        (sl ! ln pos)
 
-    getone (values, (acc, depth)) pos | pos `member` white = (values, (0, 0))
-    getone (values, (acc, depth)) pos | pos `member` black =
+    getone (values, (acc, depth)) pos | pos `member` sndMov = (values, (0, 0))
+    getone (values, (acc, depth)) pos | pos `member` fstMov =
         check (values, (acc', depth + 1)) where acc' = acc + (1 `shiftL` depth)
     getone (values, (acc, depth)) pos | otherwise =
         check (values, (acc, depth + 1))
@@ -268,8 +268,8 @@ getInputs pos scans black white values win = foldl' getInput values scans
 --
 evaluate :: (IntSet -> Int -> Vector Int) -> Theta -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
-evaluate extract theta black dim positions = map snd $ candidates where
-    e    = eval extract theta black dim (toList positions)
+evaluate extract theta fstMov dim positions = map snd $ candidates where
+    e    = eval extract theta fstMov dim (toList positions)
     emax = fst $ maximumByEx (\x y -> fst x `compare` fst y) e
     candidates = filter (\h -> fst h == emax) e
 
@@ -293,18 +293,18 @@ packTheta m (Theta w1 w2 b1 b2) =
 eval :: (IntSet -> Int -> Vector Int) -> Theta -> IntSet
                 -> Dimension -> [Pos] -> Vector (Double, (Pos, Int))
 eval _ _ _ _ [] = mempty
-eval extract theta black dim (x:xs) =
+eval extract theta fstMov dim (x:xs) =
     (score, (x, pos2Int dim x)) `cons` rest where
-    score = evalOne extract theta black dim x
-    rest = eval extract theta black dim xs
+    score = evalOne extract theta fstMov dim x
+    rest = eval extract theta fstMov dim xs
 
 -- The first input is special winning conndition (5 connected stones).
 -- This causes evaluator to return max (1.0) immediately.
 evalOne :: (IntSet -> Int -> Vector Int) -> Theta ->
                 IntSet -> Dimension -> Pos -> Double
-evalOne extract theta black dim pos = value feature theta where
+evalOne extract theta fstMov dim pos = value feature theta where
     i        = pos2Int dim pos
-    feature  = extract black i
+    feature  = extract fstMov i
 
 sigmoid :: Double -> Double
 sigmoid t = 1 / (1 + exp(-t))

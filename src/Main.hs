@@ -9,10 +9,11 @@
 --------------------------------------------------------------------------------
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Main (main) where
 
-import Prelude()
+import Prelude(read)
 import ClassyPrelude
 import Graphics.Gloss hiding (Vector)
 import Graphics.Gloss.Interface.IO.Game hiding (Vector)
@@ -22,11 +23,13 @@ import Data.Ratio
 import Data.Maybe
 import Data.List ((!!))
 import Data.Set (fromList, delete)
+import qualified Data.Text(unpack)
 import Control.Concurrent
 import System.Random
 import System.Exit
 import Ai
 import Control.Monad.Trans.State.Lazy
+import System.Console.GetOpt
 
 data PlayMode = Human | AI deriving (Eq, Show)
 
@@ -268,7 +271,18 @@ buildBoard channels config =
 
 main :: IO ()
 main = do
-    let playmode = mode gameConfig
+    argv <- getArgs
+
+    let showErr :: [String] -> IO Config
+        showErr msgs = ioError (userError (concat msgs ++ usageInfo
+                header options))
+        header = "Usage: gomoku [OPTION...]"
+    config <-
+        case getOpt Permute options (map Data.Text.unpack argv) of
+            (o,n,[]  ) -> return $ foldl' (flip id) gameConfig o
+            (_,_,errs) -> showErr errs
+
+    let playmode = mode config
         ch       = (newTChanIO, newTChanIO)
 
     epsilon <- return $ if playmode == (AI, AI)
@@ -278,7 +292,7 @@ main = do
     -- create channels for AIs
     channels <- (uncurry $ liftM2 (,)) ch
 
-    board  <- return $ buildBoard (mapTuple Just channels) gameConfig
+    board  <- return $ buildBoard (mapTuple Just channels) config
     config <- return $ conf board
 
     -- fork task for AI agent
@@ -316,3 +330,28 @@ gameConfig = Config
     ,   thetaFile    = "theta"
     ,   mode         = (AI, AI)
     }
+
+options :: [OptDescr (Config -> Config)]
+options =
+    [ Option "d" ["delay"]
+        (ReqArg (\d cfg -> cfg { delay = read d }) "USEC")
+        "delay microseconds"
+    , Option "D" ["dimension"]
+        (ReqArg (\d cfg -> cfg { dimension = parseTuple d }) "W,H")
+        "board dimension width,height"
+    , Option "w" ["wincond"]
+        (ReqArg (\d cfg -> cfg { winCondition = read d }) "CONNECTED")
+        "number of connected moves to win"
+    , Option "p" ["theta"]
+        (ReqArg (\d cfg -> cfg { thetaFile = d }) "THETA_FILE")
+        "parameter file name"
+    , Option "m" ["mode"]
+        (ReqArg (\d cfg -> cfg { mode = parseMode d }) "MODE,MODE")
+        "playing mode ([human|ai],[human|ai])"
+    ] where
+    splitComma d = (takeWhile (/= ',') d, tailEx $ dropWhile (/= ',') d)
+    parseTuple d = mapTuple read $ splitComma d
+    lkmode :: [(String, PlayMode) ]
+    lkmode = [("human", Human), ("ai", AI)]
+    toMode x = fromJust $ lookup (toLower x) lkmode
+    parseMode  d = mapTuple toMode $ splitComma d
