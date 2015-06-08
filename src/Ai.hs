@@ -108,10 +108,6 @@ readParametersOne m file = do
                 contents <- hGetContents handle
                 w        <- return (words contents)
                 doubles  <- return $ map read w :: IO [Double]
-                print $ length doubles
-                print $ exp
-                print $ wLen
-                print $ bLen
                 if length doubles /= exp
                     then return Nothing
                     else return $ Just doubles
