@@ -24,6 +24,7 @@ import System.Random(randomIO)
 import qualified Data.Matrix as M
 import Debug.Trace
 import System.Directory(copyFile)
+import Filesystem.Path(addExtension)
 
 type Pos       = (Int, Int)
 type Dimension = (Int, Int)
@@ -32,8 +33,13 @@ type Dimension = (Int, Int)
 -- W_ho (1 X hid),
 -- b_ih (hid X 1),
 -- b_ho (1 X 1)
-type ThetaType = (M.Matrix Double, Vector Double,
-                  Vector Double,   Double)
+data Theta = Theta
+    {
+        wih :: M.Matrix Double
+    ,   who :: Vector Double
+    ,   bih :: Vector Double
+    ,   bho :: Double
+    } deriving (Show)
 
 data AiState = AiState
     {
@@ -43,7 +49,7 @@ data AiState = AiState
     ,   emptySlot :: Set Pos
     ,   scan      :: [Scan]
     ,   featureMap:: (Vector Int, Int)
-    ,   theta     :: ThetaType
+    ,   theta     :: Theta
     ,   firstMove :: Bool
     ,   training  :: Handle
     ,   dataset   :: M.Matrix Int
@@ -91,33 +97,54 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
 inputSize m = m
 hidSize   m = inputSize m `div` 4
 
--- board-dimension
-aiInit :: Dimension -> Int -> FilePath -> FilePath -> IO AiState
-aiInit boardGeom winningStones thetaFile trainingFile = do
+readParametersOne :: Int -> FilePath -> IO (Maybe [Double])
+readParametersOne m file = do
     let wLen = inputSize m * hidSize m + hidSize m
         bLen = hidSize m + 1
-    wInit <- replicateM wLen $ ((-)0.5) <$> randomIO :: IO [Double]
-    bInit <- return $ replicate bLen 0.0
-    randTheta <- return $ wInit ++ bInit
-    t' <- handle ((\_ -> return randTheta) :: IOException -> IO [Double]) $
-            bracket (openFile thetaFile ReadMode)
+        exp  = wLen + bLen
+    handle ((\_ -> return Nothing) :: IOException -> IO (Maybe [Double])) $
+            bracket (openFile file ReadMode)
             hClose
             $ \handle -> do
                 contents <- hGetContents handle
-                w        <- length contents `seq` return (words contents)
-                return $ map read w :: IO [Double]
-    theta' <- return $ unpackTheta m t'
+                w        <- return (words contents)
+                doubles  <- return $ map read w :: IO [Double]
+                print $ length doubles
+                print $ exp
+                print $ wLen
+                print $ bLen
+                if length doubles /= exp
+                    then return Nothing
+                    else return $ Just doubles
+
+readParameters :: Int -> FilePath -> IO [Double]
+readParameters m file = do
+    let altfiles  = [file, file ++ ".bak"] :: [FilePath]
+        wLen = inputSize m * hidSize m + hidSize m
+        bLen = hidSize m + 1
+    wInit      <- replicateM wLen $ ((-)0.5) <$> randomIO :: IO [Double]
+    bInit      <- return $ replicate bLen 0.0
+    randTheta  <- return $ Just $ wInit ++ bInit
+    tryRead    <- mapM (readParametersOne m) altfiles
+    readOrRand <- return $ tryRead ++ [randTheta]
+    return $ fromJust $ headEx $ filter isJust tryRead
+
+-- board-dimension
+aiInit :: Dimension -> Int -> FilePath -> FilePath -> IO AiState
+aiInit boardGeom winningCond thetaFile trainingFile = do
+    t' <- readParameters m thetaFile
+    initialTheta <- return $ unpackTheta m t'
     h <- handle ((\_ -> error "Can't open file") :: IOException -> IO Handle) $
                 openFile trainingFile AppendMode
     return $ AiState
         {
             dimension  = boardGeom
-        ,   winCond    = winningStones
+        ,   winCond    = winningCond
         ,   players    = (mempty, mempty)
         ,   emptySlot  = emptyBoard
         ,   scan       = generateScanList boardGeom
         ,   featureMap = (fromList featureMapping, m + 1)
-        ,   theta      = theta'
+        ,   theta      = initialTheta
         ,   firstMove  = True
         ,   training   = h
         ,   dataset    = M.matrix (inputSize m) 0 $ const 0
@@ -127,14 +154,23 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
     emptyBoard = setFromList [(x, y) | x <- [0 .. fst boardGeom - 1],
                                        y <- [0 .. snd boardGeom - 1]]
     reverseBit i = snd $ foldr reverseBit' (i,0)
-                    ([0 .. winningStones - 1] :: [Int])
+                    ([0 .. winningCond - 1] :: [Int])
     reverseBit' b (a,v) = (a `shiftR` 1, (bset `shiftL` b) .|. v)
         where bset = 1 .&. a
-    allPatterns = [0..(2^winningStones - 1)] :: [Int]
+    allPatterns = [0..(2^winningCond - 1)] :: [Int]
     mappings = map filterFeatures allPatterns
     filterFeatures x | popCount   x < 2 = 0
     filterFeatures x | reverseBit x < x = reverseBit x
     filterFeatures x | otherwise        = x
+    -- Patterns
+    -- ...oo ..o.o
+    -- ..oo. ..ooo
+    -- .o..o .o.o.
+    -- .o.oo .oo.o
+    -- .ooo. .oooo
+    -- o...o o..oo
+    -- o.o.o o.ooo
+    -- oo.oo ooooo
     compressed = zip (nub mappings) [0..]
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
@@ -243,31 +279,31 @@ getInputs pos scans black white values win = foldl' getInput values scans
 --
 -- Value Function of the board.
 --
-evaluate :: (IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
+evaluate :: (IntSet -> Int -> Vector Int) -> Theta -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
 evaluate extract theta black dim positions = map snd $ candidates where
     e    = eval extract theta black dim (toList positions)
     emax = fst $ maximumByEx (\x y -> fst x `compare` fst y) e
     candidates = filter (\h -> fst h == emax) e
 
-unpackTheta :: Int -> [Double] -> ThetaType
+unpackTheta :: Int -> [Double] -> Theta
 unpackTheta m theta =
-    (M.fromList h i w1, fromList w2, fromList b1, b2 !! 0) where
+    Theta {wih = w1, who = take h w2, bih = take h b1, bho = b2} where
     i = inputSize m
     h = hidSize   m
-    w1 = theta
-    w2 = drop (i * h) w1
+    w1 = M.fromList h i theta
+    w2 = fromList $ drop (i * h) theta
     b1 = drop h w2
-    b2 = drop h b1
+    b2 = lastEx b1
 
-packTheta :: Int -> ThetaType -> Vector Double
-packTheta m (w1, w2, b1, b2) =
+packTheta :: Int -> Theta -> Vector Double
+packTheta m (Theta w1 w2 b1 b2) =
     packT w1 [1..h] <> w2 <> b1 <> singleton b2 where
     i = inputSize m
     h = hidSize   m
     packT w a = concat $ map ((flip M.getRow) w) $ asVector $ fromList a
 
-eval :: (IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
+eval :: (IntSet -> Int -> Vector Int) -> Theta -> IntSet
                 -> Dimension -> [Pos] -> Vector (Double, (Pos, Int))
 eval _ _ _ _ [] = mempty
 eval extract theta black dim (x:xs) =
@@ -277,7 +313,7 @@ eval extract theta black dim (x:xs) =
 
 -- The first input is special winning conndition (5 connected stones).
 -- This causes evaluator to return max (1.0) immediately.
-evalOne :: (IntSet -> Int -> Vector Int) -> ThetaType ->
+evalOne :: (IntSet -> Int -> Vector Int) -> Theta ->
                 IntSet -> Dimension -> Pos -> Double
 evalOne extract theta black dim pos = value feature theta where
     i        = pos2Int dim pos
@@ -286,17 +322,17 @@ evalOne extract theta black dim pos = value feature theta where
 sigmoid :: Double -> Double
 sigmoid t = 1 / (1 + exp(-t))
 
-values :: Vector Int -> ThetaType -> (Double, Vector Double)
-values input (w1, w2, b1, b2) = (out, hid) where
+values :: Vector Int -> Theta -> (Double, Vector Double)
+values input (Theta w1 w2 b1 b2) = (out, hid) where
     w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
     hid = zipWith (\x y -> sigmoid (x + y)) b1 w1x
     w2h = sum $ zipWith (*) w2 hid
     out = sigmoid (w2h + b2)
 
-value :: Vector Int -> ThetaType -> Double
+value :: Vector Int -> Theta -> Double
 value input theta = fst $ values input theta
 
-trainNetwork :: Double -> ThetaType -> M.Matrix Int -> ThetaType
+trainNetwork :: Double -> Theta -> M.Matrix Int -> Theta
 trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
     vdata = map ((flip M.getCol) dataset) reverseOrder
     reverseOrder = fromList $ reverse [1..M.ncols dataset] :: Vector Int
@@ -310,11 +346,11 @@ trainOne (theta, v') step = (newTheta, prev) where
     newTheta = foldr (\_ theta' -> optim theta' h step v target)
                theta ([1 .. 10] :: [Int])
 
-optim :: ThetaType -> Vector Double -> Vector Int ->
-         Double -> Double -> ThetaType
-optim old hidden input' output target = (wh', wo', bh', bo') where
+optim :: Theta -> Vector Double -> Vector Int ->
+         Double -> Double -> Theta
+optim old hidden input' output target = Theta wh wo bh bo where
     input = map fromIntegral input' :: Vector Double
-    (wh, wo, bh, bo) = old
+    (wh, wo, bh, bo) = (wih old, who old, bih old, bho old)
     deltaO = - target * deriv output
     deltaH = zipWith (\a w -> deriv a * w * deltaO) hidden wo
     wo'    = zipWith (\o h -> o - alpha * deltaO * h)
