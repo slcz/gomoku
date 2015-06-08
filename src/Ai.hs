@@ -51,7 +51,6 @@ data AiState = AiState
     ,   featureMap:: (Vector Int, Int)
     ,   theta     :: Theta
     ,   firstMove :: Bool
-    ,   training  :: Handle
     ,   dataset   :: M.Matrix Int
     ,   thetaFname:: FilePath
     }
@@ -132,10 +131,8 @@ readParameters m file = do
 -- board-dimension
 aiInit :: Dimension -> Int -> FilePath -> FilePath -> IO AiState
 aiInit boardGeom winningCond thetaFile trainingFile = do
-    t' <- readParameters m thetaFile
-    initialTheta <- return $ unpackTheta m t'
-    h <- handle ((\_ -> error "Can't open file") :: IOException -> IO Handle) $
-                openFile trainingFile AppendMode
+    parameters <- readParameters m thetaFile
+    initialTheta <- return $ unpackTheta m parameters
     return $ AiState
         {
             dimension  = boardGeom
@@ -146,7 +143,6 @@ aiInit boardGeom winningCond thetaFile trainingFile = do
         ,   featureMap = (fromList featureMapping, m + 1)
         ,   theta      = initialTheta
         ,   firstMove  = True
-        ,   training   = h
         ,   dataset    = M.matrix (inputSize m) 0 $ const 0
         ,   thetaFname = thetaFile
         }
@@ -189,7 +185,7 @@ firstSet first = if first then [1, 0] else [0, 1]
 aiMove :: Float -> StateT AiState IO Pos
 aiMove epsilon = do
     AiState dimension@(dx,dy) win (black, white) slot scans featuremap
-            parameters first _ _ _ <- get
+            parameters first _ _ <- get
     if (not first) || (not $ null black)
         then do
             rdm <- if epsilon >= 0.000001
@@ -209,12 +205,11 @@ aiMove epsilon = do
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
     AiState dimension win (black, white) slot scans featuremap
-            parameters first h dset _ <- get
+            parameters first dset _ <- get
     pInt   <- return $ pos2Int dimension pos
     black' <- return $ insertSet pInt black
     allInput <- return $ extractFeatures featuremap scans white win black pInt
     dset'  <- return $ dset M.<|> M.colVector allInput
-    hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") "" allInput
     modify' (\s -> s {  emptySlot = deleteSet pos slot
                      ,  players   = (white, black')
                      ,  firstMove = not first
@@ -222,7 +217,6 @@ stateChange pos = do
 
 gameFinish :: GameResult -> StateT AiState IO ()
 gameFinish r = do
-    h        <- gets training
     first    <- gets firstMove
     (_, m')  <- gets featureMap
     m        <- return $ m' - 1
@@ -235,9 +229,6 @@ gameFinish r = do
                     _        -> 1.0
     newTheta <- return $ trainNetwork final t dset
     liftIO $ do
-        putStrLn $ tshow r
-        hPutStrLn h $ tshow final
-        hClose h
         handle ((\_ -> return ()) :: IOException -> IO ()) $
             bracket (openFile tF WriteMode)
             hClose
