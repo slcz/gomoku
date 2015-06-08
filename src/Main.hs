@@ -337,13 +337,13 @@ options =
         (ReqArg (\d cfg -> cfg { delay = read d }) "USEC")
         "delay microseconds"
     , Option "D" ["dimension"]
-        (ReqArg (\d cfg -> cfg { dimension = parseTuple d }) "W,H")
+        (ReqArg (\d cfg -> cfg { dimension = parseTuple d }) "WIDTH,HEIGHT")
         "board dimension width,height"
     , Option "w" ["wincond"]
         (ReqArg (\d cfg -> cfg { winCondition = read d }) "CONNECTED")
         "number of connected moves to win"
     , Option "p" ["theta"]
-        (ReqArg (\d cfg -> cfg { thetaFile = d }) "THETA_FILE")
+        (ReqArg (\d cfg -> cfg { thetaFile = d }) "PARAMETER_FILE")
         "parameter file name"
     , Option "m" ["mode"]
         (ReqArg (\d cfg -> cfg { mode = parseMode d }) "MODE,MODE")
