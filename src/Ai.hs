@@ -27,8 +27,13 @@ import System.Directory(copyFile)
 
 type Pos       = (Int, Int)
 type Dimension = (Int, Int)
-type ThetaType = (M.Matrix Double, M.Matrix Double,
-                  M.Matrix Double, M.Matrix Double)
+--
+-- W_ih (hid X input),
+-- W_ho (1 X hid),
+-- b_ih (hid X 1),
+-- b_ho (1 X 1)
+type ThetaType = (M.Matrix Double, Vector Double,
+                  Vector Double,   Double)
 
 data AiState = AiState
     {
@@ -247,8 +252,7 @@ evaluate extract theta black dim positions = map snd $ candidates where
 
 unpackTheta :: Int -> [Double] -> ThetaType
 unpackTheta m theta =
-    (M.fromList h i w1, M.fromList 1 h w2,
-     M.fromList h 1 b1, M.fromList 1 1 b2) where
+    (M.fromList h i w1, fromList w2, fromList b1, b2 !! 0) where
     i = inputSize m
     h = hidSize   m
     w1 = theta
@@ -258,8 +262,7 @@ unpackTheta m theta =
 
 packTheta :: Int -> ThetaType -> Vector Double
 packTheta m (w1, w2, b1, b2) =
-    packT w1 [1..h] <> packT w2 [1..1] <>
-    packT b1 [1..h] <> packT b2 [1..1] where
+    packT w1 [1..h] <> w2 <> b1 <> singleton b2 where
     i = inputSize m
     h = hidSize   m
     packT w a = concat $ map ((flip M.getRow) w) $ asVector $ fromList a
@@ -286,9 +289,9 @@ sigmoid t = 1 / (1 + exp(-t))
 values :: Vector Int -> ThetaType -> (Double, Vector Double)
 values input (w1, w2, b1, b2) = (out, hid) where
     w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
-    hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
-    w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
-    out = sigmoid (w2h + M.getElem 1 1 b2)
+    hid = zipWith (\x y -> sigmoid (x + y)) b1 w1x
+    w2h = sum $ zipWith (*) w2 hid
+    out = sigmoid (w2h + b2)
 
 value :: Vector Int -> ThetaType -> Double
 value input theta = fst $ values input theta
@@ -312,15 +315,14 @@ optim :: ThetaType -> Vector Double -> Vector Int ->
 optim old hidden input' output target = (wh', wo', bh', bo') where
     input = map fromIntegral input' :: Vector Double
     (wh, wo, bh, bo) = old
-    woV    = M.getRow 1 wo
     deltaO = - target * deriv output
-    deltaH = zipWith (\a w -> deriv a * w * deltaO) hidden woV
-    wo'    = M.rowVector $ zipWith (\o h -> o - alpha * deltaO * h)
-             woV hidden
-    bo'    = M.matrix 1 1 (\_ -> M.getElem 1 1 bo - alpha * deltaO)
+    deltaH = zipWith (\a w -> deriv a * w * deltaO) hidden wo
+    wo'    = zipWith (\o h -> o - alpha * deltaO * h)
+             wo hidden
+    bo'    = bo - alpha * deltaO
     temp   = map (alpha *) $ M.colVector deltaH `M.multStd` M.rowVector input
     wh'    = M.matrix (M.nrows wh) (M.ncols wh)
                 (\(r, c) -> M.getElem r c wh - M.getElem r c temp)
-    bh'    = M.colVector $ zipWith (-) (M.getCol 1 bh) (map (alpha *) deltaH)
+    bh'    = zipWith (-) bh $ map (alpha *) deltaH
     deriv a = a * (1 - a)
     alpha   = 0.01
