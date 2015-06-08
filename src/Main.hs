@@ -62,7 +62,7 @@ data Config = Config
     ,   textScale    :: Float
     ,   delay        :: Int
     ,   thetaFile    :: FilePath
-    ,   trainingFile :: FilePath
+    ,   mode         :: (PlayMode, PlayMode)
     }
 
 -- check x, y is within the board boundary.
@@ -199,7 +199,7 @@ nextAIMove pos board = fst <$> nextState board pos
 step :: Float -> Board -> IO Board
 step _ board | (playMode . fst . player $ board) == Human =
     if isTie board || isWin board
-        then return $ initialBoard { ch = ch board }
+        then return $ buildBoard (ch board) (mode gameConfig)
         else return board
 step _ board = do
     let (chTx, chRx) = mapTuple fromJust $ ch board
@@ -212,7 +212,7 @@ stepUnblocked :: Board -> Message -> IO Board
 stepUnblocked board msg =
     let (chTx, chRx) = mapTuple fromJust $ ch board
     in if isTie board || isWin board
-        then return $ initialBoard {ch = ch board }
+        then return $ buildBoard (ch board) (mode gameConfig)
         else
             (threadDelay $ delay gameConfig) >>
             case msg of
@@ -246,18 +246,25 @@ runAI state channels epsilon = do
 startAI :: (TChan Message, TChan Message) -> Float -> IO ()
 startAI channels epsilon = do
     state <- aiInit (dimension gameConfig) (winCondition gameConfig)
-                    (thetaFile gameConfig) (trainingFile gameConfig)
-    let playmode = mapTuple playMode . player $ initialBoard
+                    (thetaFile gameConfig)
+    let playmode = mode gameConfig
     when (fst playmode == AI) $
         atomically $ (flip writeTChan) Start $ sender channels
     runAI state channels epsilon
     startAI channels epsilon
     return ()
 
+buildBoard channels playmode =
+    let i = player initialBoard
+    in initialBoard {
+               ch = channels,
+               player = ((fst i) { playMode = fst playmode },
+                         (snd i) { playMode = snd playmode }) }
+
 main :: IO ()
 main = do
-    let playmode = mapTuple playMode . player $ initialBoard
-        ch = (newTChanIO, newTChanIO)
+    let playmode = mode gameConfig
+        ch       = (newTChanIO, newTChanIO)
 
     epsilon <- return $ if playmode == (AI, AI)
                             then 0.01
@@ -269,7 +276,7 @@ main = do
     -- fork task for AI agent
     _ <- forkIO (startAI channels epsilon)
 
-    board <- return $ initialBoard {ch = mapTuple Just channels }
+    board <- return $ buildBoard (mapTuple Just channels) playmode
 
     -- Sending message to jumpstart the first AI
     -- when (fst playmode == AI) $
@@ -285,7 +292,7 @@ main = do
 -- Initial configurations
 initialBoard = Board
     {
-        player  = (Player mempty black AI, Player mempty white Human)
+        player  = (Player mempty black Human, Player mempty white Human)
     ,   totalMoves= 0
     ,   win       = mempty
     ,   ch        = (Nothing, Nothing)
@@ -293,16 +300,16 @@ initialBoard = Board
 
 gameConfig = Config
     {
-        dimension  = (15, 15)
-    ,   gridSize   = 50
-    ,   background = makeColor 0.86 0.71 0.52 0.50
-    ,   stoneSize  = fromRational $ 4 % 5
-    ,   markSize   = fromRational $ 1 % 6
+        dimension    = (15, 15)
+    ,   gridSize     = 50
+    ,   background   = makeColor 0.86 0.71 0.52 0.50
+    ,   stoneSize    = fromRational $ 4 % 5
+    ,   markSize     = fromRational $ 1 % 6
     ,   pollInterval = 200
     ,   winCondition = 5 -- Win condition: 5 stones connected
-    ,   margin     = 20
-    ,   textScale  = 0.2
-    ,   delay      = 0
-    ,   thetaFile  = "theta"
-    ,   trainingFile = "gomoku-trainingset"
+    ,   margin       = 20
+    ,   textScale    = 0.2
+    ,   delay        = 0
+    ,   thetaFile    = "theta"
+    ,   mode         = (AI, AI)
     }

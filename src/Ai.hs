@@ -125,8 +125,8 @@ readParameters m file = do
     return $ fromJust $ headEx $ filter isJust tryRead
 
 -- board-dimension
-aiInit :: Dimension -> Int -> FilePath -> FilePath -> IO AiState
-aiInit boardGeom winningCond thetaFile trainingFile = do
+aiInit :: Dimension -> Int -> FilePath -> IO AiState
+aiInit boardGeom winningCond thetaFile = do
     parameters <- readParameters m thetaFile
     initialTheta <- return $ unpackTheta m parameters
     return $ AiState
