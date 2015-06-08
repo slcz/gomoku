@@ -83,7 +83,7 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
     diagRIdx x = x `mod` (w + 1) - 1
     diagLIdx x = x `mod` (w - 1) - w'
 
-inputSize m = m * 3
+inputSize m = m
 hidSize   m = inputSize m `div` 4
 
 -- board-dimension
@@ -134,23 +134,22 @@ aiInit boardGeom winningStones thetaFile trainingFile = do
     featureMapping = map fromJust $ map ((flip lookup) compressed) mappings
     m = maximumEx featureMapping
 
-extractFeatures featuremap scans white win black black' pos =
-    (zipWith (-) (g black' white pos) (g black white pos),
-     zipWith (-) (g white black' pos) (g white black pos))
+extractFeatures featuremap scans white win black pos =
+    zipWith (+) (map (\x -> if x /= 0 then x + 1 else x) a) b
     where
+    a = zipWith (-) (g black' white pos) (g black white pos)
+    b = zipWith (-) (g white' black pos) (g white black pos)
+    black' = insertSet pos black
+    white' = insertSet pos white
     g black white pos = getDelta featuremap pos scans black white win
 
 firstSet first = if first then [1, 0] else [0, 1]
-
-extractAllFeatures featuremap scans white win first black black' pos =
-    bf ++ wf ++ (zipWith (-) bf wf) where
-        (bf, wf) = extractFeatures featuremap scans white win black black' pos
 
 aiMove :: Float -> StateT AiState IO Pos
 aiMove epsilon = do
     AiState dimension@(dx,dy) win (black, white) slot scans featuremap
             parameters first _ _ _ <- get
-    if (not $ null black)
+    if (not first) || (not $ null black)
         then do
             rdm <- if epsilon >= 0.000001
                 then liftIO $ randomRIO (0, floor (1 / epsilon) :: Int)
@@ -160,25 +159,11 @@ aiMove epsilon = do
                     size <- liftIO $ randomRIO (0, length slot - 1)
                     return (setToList slot !! size)
                 else do
-                    let ext = extractAllFeatures featuremap scans white win first
+                    let ext = extractFeatures featuremap scans white win
                     bestMoves <- return $ evaluate ext parameters black dimension slot
                     randCandidate <- liftIO $ randomRIO (0, length bestMoves - 1)
                     return $ fst $ fromJust $ index bestMoves randCandidate
-        else
-            if first
-                then return (dx `div` 2, dy `div` 2)
-                else neighbour dx dy (int2Pos dimension $ headEx white) where
-                    neighbour dx dy white@(x', y') = do
-                        (x, y) <- genNeighbour
-                        m@(rx,ry) <- return (x' + x, y' + y)
-                        if rx < 0 || rx >= dx || ry <0 || ry >= dy
-                            then neighbour dx dy white
-                            else return m
-                    genNeighbour = do x <- liftIO $ randomRIO (-1, 1)
-                                      y <- liftIO $ randomRIO (-1, 1)
-                                      if x == 0 && y == 0
-                                          then genNeighbour
-                                          else return (x, y)
+        else return (dx `div` 2, dy `div` 2)
 
 stateChange :: Pos -> StateT AiState IO ()
 stateChange pos = do
@@ -186,8 +171,7 @@ stateChange pos = do
             parameters first h dset _ <- get
     pInt   <- return $ pos2Int dimension pos
     black' <- return $ insertSet pInt black
-    allInput <- return $ extractAllFeatures featuremap scans white win
-                         first black black' pInt
+    allInput <- return $ extractFeatures featuremap scans white win black pInt
     dset'  <- return $ dset M.<|> M.colVector allInput
     hPutStrLn h $ foldl' (\s x -> s ++ tshow x ++ " ") "" allInput
     modify' (\s -> s {  emptySlot = deleteSet pos slot
@@ -254,7 +238,7 @@ getInputs pos scans black white values win = foldl' getInput values scans
 --
 -- Value Function of the board.
 --
-evaluate :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
+evaluate :: (IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
 evaluate extract theta black dim positions = map snd $ candidates where
     e    = eval extract theta black dim (toList positions)
@@ -280,7 +264,7 @@ packTheta m (w1, w2, b1, b2) =
     h = hidSize   m
     packT w a = concat $ map ((flip M.getRow) w) $ asVector $ fromList a
 
-eval :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
+eval :: (IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
                 -> Dimension -> [Pos] -> Vector (Double, (Pos, Int))
 eval _ _ _ _ [] = mempty
 eval extract theta black dim (x:xs) =
@@ -290,12 +274,11 @@ eval extract theta black dim (x:xs) =
 
 -- The first input is special winning conndition (5 connected stones).
 -- This causes evaluator to return max (1.0) immediately.
-evalOne :: (IntSet -> IntSet -> Int -> Vector Int) -> ThetaType ->
+evalOne :: (IntSet -> Int -> Vector Int) -> ThetaType ->
                 IntSet -> Dimension -> Pos -> Double
 evalOne extract theta black dim pos = value feature theta where
     i        = pos2Int dim pos
-    black'   = insertSet i black
-    feature  = extract black black' i
+    feature  = extract black i
 
 sigmoid :: Double -> Double
 sigmoid t = 1 / (1 + exp(-t))
