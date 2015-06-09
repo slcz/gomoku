@@ -13,8 +13,7 @@ Usage: gomoku [OPTION...]
 
 ![screenshot] (https://github.com/slcz/gomoku/blob/master/board.png)
 
-AI strategy is based on [temporal difference learning](http://en.wikipedia.org/wiki/Temporal_difference_learning). State value of time $t+1$ is used to update a state value at time $t$,
-
+AI strategy is based on [temporal difference learning](http://en.wikipedia.org/wiki/Temporal_difference_learning). State value of time _t+1_ is used to update a state value at time _t_,
 ```math
-    V(s_t) := V(s_t) + \alpha(r_t + \gamma(V(s_t+1) - V(S_t)))
+    V(t) := V(t) + α(r(t) + γ(V(t+1) - V(t)))
 ```
