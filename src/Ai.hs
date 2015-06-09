@@ -335,7 +335,7 @@ trainOne (theta, v') step = (newTheta, prev) where
 
 optim :: Theta -> Vector Double -> Vector Int ->
          Double -> Double -> Theta
-optim old hidden input' output target = Theta wh wo bh bo where
+optim old hidden input' output target = Theta wh' wo' bh' bo' where
     input = map fromIntegral input' :: Vector Double
     (wh, wo, bh, bo) = (wih old, who old, bih old, bho old)
     deltaO = - target * deriv output
