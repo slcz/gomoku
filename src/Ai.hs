@@ -40,7 +40,7 @@ data AiState = AiState
     ,   featureMap:: (Vector Int, Int)
     ,   theta     :: ThetaType
     ,   firstMove :: Bool
-    ,   dataset   :: M.Matrix Int
+    ,   dataset   :: M.Matrix Double
     ,   thetaFname:: FilePath
     }
 
@@ -148,7 +148,7 @@ aiInit boardGeom winningStones thetaFile = do
     m = maximumEx featureMapping
 
 extractFeatures featuremap scans white win black pos =
-    zipWith (+) (map (\x -> if x /= 0 then x + 1 else x) a) b
+    zipWith (+) (map (\x -> if x /= 0 then x + 0.2 else x) a) b
     where
     a = zipWith (-) (g black' white pos) (g black white pos)
     b = zipWith (-) (g white' black pos) (g white black pos)
@@ -216,9 +216,9 @@ gameFinish r = do
 -- return input delta after move.
 --
 getDelta :: (Vector Int, Int) -> Int -> [Scan] -> IntSet -> IntSet ->
-            Int -> Vector Int
+            Int -> Vector Double
 getDelta (mapping, size) pos scans black white win =
-    drop 1 $ compress $ getInputs pos scans black white
+    map fromIntegral $ drop 1 $ compress $ getInputs pos scans black white
         initialValues win where
     initialValues = fromList $ replicate (2 ^ win) 0
     compress v = foldl' f (replicate size 0) (zip mapping v) where
@@ -246,7 +246,7 @@ getInputs pos scans black white values win = foldl' getInput values scans
 --
 -- Value Function of the board.
 --
-evaluate :: (IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
+evaluate :: (IntSet -> Int -> Vector Double) -> ThetaType -> IntSet
                 -> Dimension -> Set Pos -> Vector (Pos, Int)
 evaluate extract theta black dim positions = map snd $ candidates where
     e    = eval extract theta black dim (toList positions)
@@ -272,7 +272,7 @@ packTheta m (w1, w2, b1, b2) =
     h = hidSize   m
     packT w a = concat $ map ((flip M.getRow) w) $ asVector $ fromList a
 
-eval :: (IntSet -> Int -> Vector Int) -> ThetaType -> IntSet
+eval :: (IntSet -> Int -> Vector Double) -> ThetaType -> IntSet
                 -> Dimension -> [Pos] -> Vector (Double, (Pos, Int))
 eval _ _ _ _ [] = mempty
 eval extract theta black dim (x:xs) =
@@ -282,7 +282,7 @@ eval extract theta black dim (x:xs) =
 
 -- The first input is special winning conndition (5 connected stones).
 -- This causes evaluator to return max (1.0) immediately.
-evalOne :: (IntSet -> Int -> Vector Int) -> ThetaType ->
+evalOne :: (IntSet -> Int -> Vector Double) -> ThetaType ->
                 IntSet -> Dimension -> Pos -> Double
 evalOne extract theta black dim pos = value feature theta where
     i        = pos2Int dim pos
@@ -291,17 +291,17 @@ evalOne extract theta black dim pos = value feature theta where
 sigmoid :: Double -> Double
 sigmoid t = 1 / (1 + exp(-t))
 
-values :: Vector Int -> ThetaType -> (Double, Vector Double)
+values :: Vector Double -> ThetaType -> (Double, Vector Double)
 values input (w1, w2, b1, b2) = (out, hid) where
-    w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (map fromIntegral input)
+    w1x = M.getCol 1 $ w1 `M.multStd` M.colVector input
     hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
     w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
     out = sigmoid (w2h + M.getElem 1 1 b2)
 
-value :: Vector Int -> ThetaType -> Double
+value :: Vector Double -> ThetaType -> Double
 value input theta = fst $ values input theta
 
-trainNetwork :: Double -> ThetaType -> M.Matrix Int -> ThetaType
+trainNetwork :: Double -> ThetaType -> M.Matrix Double -> ThetaType
 trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
     vdata = map ((flip M.getCol) dataset) reverseOrder
     reverseOrder = fromList $ reverse [1..M.ncols dataset] :: Vector Int
@@ -315,10 +315,9 @@ trainOne (theta, v') step = (newTheta, prev) where
     newTheta = foldr (\_ theta' -> optim theta' h step v target)
                theta ([1 .. 50] :: [Int])
 
-optim :: ThetaType -> Vector Double -> Vector Int ->
+optim :: ThetaType -> Vector Double -> Vector Double ->
          Double -> Double -> ThetaType
-optim old hidden input' output target = (wh', wo', bh, bo) where
-    input = map fromIntegral input' :: Vector Double
+optim old hidden input output target = (wh', wo', bh', bo') where
     (wh, wo, bh, bo) = old
     woV    = M.getRow 1 wo
     bhV    = M.getCol 1 bh
