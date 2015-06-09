@@ -19,8 +19,28 @@ AI strategy is based on [temporal difference learning](http://en.wikipedia.org/w
 ```
 Where _V(t)_ is the value of state at time _t_, α is learning rate, λ is the decay factor that credits the reward to previous moves and _r(t)_ is the instant reward get from time _t_. Suppose the terminal state is specified by _T_, the end game reward _r(T)_ is 1 if the game is won, 0.5 when tie and 0 when loss. The reward is then back propagated to the previous states, subject to the decay factor λ. For all intermediate moves, _r(t)_ are set to 0, stands for no instant rewards.
 
-Since the game is played by 2 parties in turn, the mover always makes move to maximize it's own value and minimize the opponents value. The actual value function uses minmax strategy, i.e.,
+Since the game is played by two parties in turn, the mover always plays to maximize its own value and minimize the opponents value. The actual value function uses minmax strategy, i.e.,
 ```math
         V(t) ← 1 - V(t) - λ(V(t+1) - V(t)), when t ≠ T
         V(T) ← 1
+```
+
+AI training happens offline after each game, since only when the reward (win/loss/tie) is known. Each step is trained by a 3 layers neural network, using target $V(t+1) - V(t)$. Input features are gathered by scanning the board for all 5 neighbouring positions (horizontally, vertically and diagnoally), looking for locations occupied with only movers' stones (and/or empty slots). In particular, the following patterns are recognized as input features,
+```
+...oo
+..o.o
+..oo.
+..ooo
+.o..o
+.o.o.
+.o.oo
+.oo.o
+.ooo.
+.oooo
+o...o
+o..oo
+o.o.o
+o.ooo
+oo.oo
+ooooo
 ```
