@@ -26,6 +26,8 @@ Since the game is played by two parties in turn, the mover always plays to maxim
 ```
 
 AI training happens offline after each game, since only when the reward (win/loss/tie) is known. Each step is trained by a 3 layers neural network, using target $V(t+1) - V(t)$. Input features are gathered by scanning the board for all 5 neighbouring positions (horizontally, vertically and diagnoally), looking for locations occupied with only movers' stones (and/or empty slots). In particular, the following patterns are recognized as input features,
+| |     |
+|-|-----|
 |1|...oo|
 |2|..o.o|
 |3|..oo.|
