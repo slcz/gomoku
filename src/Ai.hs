@@ -122,7 +122,7 @@ readParameters m file = do
     randTheta  <- return $ Just $ wInit ++ bInit
     tryRead    <- mapM (readParametersOne m) altfiles
     readOrRand <- return $ tryRead ++ [randTheta]
-    return $ fromJust $ headEx $ filter isJust tryRead
+    return $ fromJust $ headEx $ filter isJust readOrRand
 
 -- board-dimension
 aiInit :: Dimension -> Int -> FilePath -> IO AiState
