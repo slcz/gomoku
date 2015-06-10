@@ -12,7 +12,7 @@ module Ai ( Pos, Dimension, aiInit, stateChange, gameFinish, AiState, aiMove,
 import Prelude()
 import ClassyPrelude
 import Data.List ((!!), iterate, nub)
-import Data.Vector ((!), modify, head, tail)
+import Data.Vector ((!), modify, head, tail, init)
 import Data.Vector.Mutable (write)
 import Control.Monad.Trans.State.Lazy
 import System.Random (randomRIO)
@@ -82,7 +82,7 @@ generateScanList d = zipWith build [hScan, vScan, diagRScan, diagLScan]
     diagRIdx x = x `mod` (w + 1) - 1
     diagLIdx x = x `mod` (w - 1) - w'
 
-inputSize m = m
+inputSize m = m - 1
 hidSize   m = inputSize m `div` 4
 
 readParametersOne :: Int -> FilePath -> IO (Maybe [Double])
@@ -128,7 +128,7 @@ aiInit boardGeom winningStones thetaFile = do
         ,   featureMap = (fromList featureMapping, m + 1)
         ,   theta      = initialTheta
         ,   firstMove  = True
-        ,   dataset    = M.matrix (inputSize m) 0 $ const 0
+        ,   dataset    = M.matrix m 0 $ const 0
         ,   thetaFname = thetaFile
         }
     where
@@ -292,8 +292,10 @@ sigmoid :: Double -> Double
 sigmoid t = 1 / (1 + exp(-t))
 
 values :: Vector Double -> ThetaType -> (Double, Vector Double)
-values input (w1, w2, b1, b2) = (out, hid) where
-    w1x = M.getCol 1 $ w1 `M.multStd` M.colVector input
+values input (w1, w2, b1, b2) | lastEx input > 0.1 =
+    (lastEx input * 10, replicate (M.nrows b1) 0.0)
+values input (w1, w2, b1, b2) | otherwise = (out, hid) where
+    w1x = M.getCol 1 $ w1 `M.multStd` M.colVector (Data.Vector.init input)
     hid = zipWith (\x y -> sigmoid (x + y)) (M.getCol 1 b1) w1x
     w2h = M.getElem 1 1 $ w2 `M.multStd` M.colVector hid
     out = sigmoid (w2h + M.getElem 1 1 b2)
@@ -307,7 +309,8 @@ trainNetwork v' theta dataset = fst $ foldl' trainOne (theta, v') vdata where
     reverseOrder = fromList $ reverse [1..M.ncols dataset] :: Vector Int
 
 trainOne (theta, v') step = (newTheta, prev) where
-    (v, h) = values step theta
+    (v'', h'') = values step theta
+    (v, h) = if v'' > 1.0 then (v', h'') else (v'', h'')
     target = v' - v
     lambda = 0.8
     prev   = 1 - (v + lambda * target)
