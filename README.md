@@ -1,5 +1,5 @@
 # gomoku
-Gomoku game written in haskell and based on gloss library. It is played on 15x15 board, though the size of the board can be changed.
+Gomoku game written in haskell gloss library and reinforcement learning algorithm. It is played on 15x15 board, though the size of the board can be changed.
 
 ```
 Usage: gomoku [OPTION...]
