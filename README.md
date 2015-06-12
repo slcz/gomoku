@@ -50,3 +50,5 @@ To get the input feature set, delta of patterns are recognized for each side, th
     I ← α I(m) + I(f)
 ```
 Where α is credit factor for the first mover, _I(m)_ is the feature vectors of the first mover and I(f) the feature vectors of the next mover. I is the final input vector, which is used for feed forward neural networks.
+
+Attached sample parameter file (theta) plays decently well. It is the result of AI self playing for a few thousand games. It easily beats beginner-intermediate human players.
