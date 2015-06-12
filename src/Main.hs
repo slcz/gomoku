@@ -1,11 +1,6 @@
 --------------------------------------------------------------------------------
 --
 -- | Gomoku is a simple board game using haskell gloss library.
--- @
--- Release Notes:
--- For 0.1.0.0
---     Initial checkin, human to human.
---
 --------------------------------------------------------------------------------
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE OverloadedStrings #-}
